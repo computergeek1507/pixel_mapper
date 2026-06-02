@@ -11,8 +11,14 @@ import 'widgets/preview_painter.dart';
 class ScanPage extends StatefulWidget {
   final TargetConfig config;
   final CameraSource camera;
+  final ScanMode mode;
 
-  const ScanPage({super.key, required this.config, required this.camera});
+  const ScanPage({
+    super.key,
+    required this.config,
+    required this.camera,
+    this.mode = ScanMode.sequential,
+  });
 
   @override
   State<ScanPage> createState() => _ScanPageState();
@@ -26,7 +32,8 @@ class _ScanPageState extends State<ScanPage> {
   @override
   void initState() {
     super.initState();
-    _scan = ScanController(config: widget.config, camera: widget.camera);
+    _scan = ScanController(
+        config: widget.config, camera: widget.camera, mode: widget.mode);
     _scan.addListener(_onChange);
     _initCamera();
   }
@@ -98,9 +105,12 @@ class _ScanPageState extends State<ScanPage> {
                 const SizedBox(height: 8),
                 Text(
                   running
-                      ? 'Scanning pixel ${_scan.currentIndex + 1} of '
-                          '${widget.config.pixelCount} — '
-                          '${_scan.detectedCount} found'
+                      ? (widget.mode == ScanMode.fastBase3
+                          ? 'Capturing frame ${_scan.currentIndex + 1} of '
+                              '${_scan.stepsTotal}'
+                          : 'Scanning pixel ${_scan.currentIndex + 1} of '
+                              '${widget.config.pixelCount} — '
+                              '${_scan.detectedCount} found')
                       : _statusText(),
                 ),
                 const SizedBox(height: 8),

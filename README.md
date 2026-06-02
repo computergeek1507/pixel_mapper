@@ -8,8 +8,13 @@ camera, locating each lit pixel with computer vision, and exporting an xLights `
 
 1. **Target** — point the app at your controller (IP + pixel count) over **DDP** or
    **sACN / E1.31**.
-2. **Scan** — the app lights each pixel in turn, captures a camera frame, and finds the
-   brightest blob (with a black reference frame subtracted to ignore ambient hotspots).
+2. **Scan** — two modes:
+   - **Fast (base-3)** — xLights' "non-linear pixel pattern": every pixel is lit in every
+     frame, coloured R/G/B by one base-3 digit of its index, so all pixels are identified in
+     only ~log₃(N)+2 frames (e.g. 500 pixels in 8 frames). Two checksum digits reject misreads.
+   - **Sequential** — light one pixel at a time and find the single bright blob. Slower but
+     dead simple.
+   Both subtract a black reference frame to ignore ambient hotspots.
 3. **Review** — see the detected layout, drop bad points, and re-scan individual pixels.
 4. **Export** — save an xLights `.xmodel` (a `<custommodel>` with both `CustomModel` and
    `CustomModelCompressed`, so it imports into old and new xLights alike).

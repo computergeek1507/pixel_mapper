@@ -8,6 +8,7 @@ import '../services/camera_source.dart';
 import '../services/camera_source_camera.dart';
 import '../services/camera_source_rtsp.dart';
 import '../services/pixel_output.dart';
+import '../services/scan_controller.dart';
 import 'scan_page.dart';
 
 /// Phase 1 UI: configure the controller target and manually exercise pixels
@@ -29,6 +30,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
 
   Protocol _protocol = Protocol.ddp;
   bool _useRtsp = false;
+  ScanMode _scanMode = ScanMode.fastBase3;
   PixelOutput? _output;
   bool _connecting = false;
   String? _status;
@@ -61,7 +63,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
         : CameraPackageSource();
     if (!mounted) return;
     Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => ScanPage(config: cfg, camera: camera),
+      builder: (_) => ScanPage(config: cfg, camera: camera, mode: _scanMode),
     ));
   }
 
@@ -295,6 +297,31 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
           const Divider(height: 32),
           Text('Camera scan', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
+          SegmentedButton<ScanMode>(
+            segments: const [
+              ButtonSegment(
+                value: ScanMode.fastBase3,
+                label: Text('Fast (base-3)'),
+                icon: Icon(Icons.bolt),
+              ),
+              ButtonSegment(
+                value: ScanMode.sequential,
+                label: Text('Sequential'),
+                icon: Icon(Icons.format_list_numbered),
+              ),
+            ],
+            selected: {_scanMode},
+            onSelectionChanged: (s) => setState(() => _scanMode = s.first),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _scanMode == ScanMode.fastBase3
+                ? 'Lights every pixel each frame in R/G/B; identifies all '
+                    'pixels in ~log₃(N)+2 frames (xLights method).'
+                : 'Lights one pixel at a time — slower but simplest.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 12),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Use RTSP network camera'),
