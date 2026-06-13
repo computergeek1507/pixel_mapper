@@ -241,13 +241,13 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
           if (!_connected)
             const Text('Connect to enable pixel tests.')
           else ...[
-            Text('Pixel $_currentPixel of ${pixelCount - 1}'),
+            Text('Pixel ${_currentPixel + 1} of $pixelCount'),
             Slider(
               value: _currentPixel.toDouble(),
               min: 0,
               max: (pixelCount - 1).toDouble().clamp(0, double.infinity),
               divisions: pixelCount > 1 ? pixelCount - 1 : null,
-              label: '$_currentPixel',
+              label: '${_currentPixel + 1}',
               onChanged: (v) => _lightPixel(v.round()),
             ),
             Row(
