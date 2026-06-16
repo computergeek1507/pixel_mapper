@@ -1,0 +1,33 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="12" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Content sized to sit inside the adaptive-icon safe zone (center ~66%).
+       Pixel grid (R/G/B base-3 scan pattern) + camera viewfinder brackets. -->
+  <g transform="translate(512 512) scale(0.82) translate(-512 -512)">
+    <g filter="url(#glow)">
+      <circle cx="320" cy="320" r="46" fill="#FF3B30"/>
+      <circle cx="512" cy="320" r="46" fill="#34C759"/>
+      <circle cx="704" cy="320" r="46" fill="#FF9500"/>
+      <circle cx="320" cy="512" r="46" fill="#FF9500"/>
+      <circle cx="512" cy="512" r="46" fill="#0A84FF"/>
+      <circle cx="704" cy="512" r="46" fill="#FF3B30"/>
+      <circle cx="320" cy="704" r="46" fill="#34C759"/>
+      <circle cx="512" cy="704" r="46" fill="#FF9500"/>
+      <circle cx="704" cy="704" r="46" fill="#34C759"/>
+    </g>
+    <g fill="none" stroke="#FFB74D" stroke-width="34" stroke-linecap="round">
+      <path d="M 230 320 L 230 230 L 320 230"/>
+      <path d="M 704 230 L 794 230 L 794 320"/>
+      <path d="M 230 704 L 230 794 L 320 794"/>
+      <path d="M 794 704 L 794 794 L 704 794"/>
+    </g>
+  </g>
+</svg>

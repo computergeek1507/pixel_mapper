@@ -68,6 +68,22 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+# App launcher icon generation. Run: dart run flutter_launcher_icons
+flutter_launcher_icons:
+  image_path: "assets/icon/app_icon.png"
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  # Windows .ico is generated manually as a multi-resolution 256px icon
+  # (16/24/32/48/64/128/256) — see assets/icon/build_windows_ico.sh.
+  # flutter_launcher_icons only emits a single 48px frame, so it's disabled here.
+  windows:
+    generate: false
+    image_path: "assets/icon/app_icon.png"
+  adaptive_icon_background: "#1565C0"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
