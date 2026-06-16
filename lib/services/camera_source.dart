@@ -7,7 +7,9 @@ import 'package:flutter/widgets.dart';
 /// Implementations:
 /// - [CameraPackageSource] (camera package) — Android, iOS, and Windows
 ///   webcam / Windows 11 Connected Camera.
-/// - [RtspCameraSource] (media_kit) — Windows network/IP cameras.
+/// - [RtspCameraSource] (media_kit) — Windows network/IP cameras only. The RTSP
+///   option is gated to Windows in the UI and media_kit's native libs ship only
+///   on Windows, so Android/iOS always use [CameraPackageSource].
 ///
 /// The scan engine drives capture by calling [captureFrame] once per lit pixel.
 /// A still capture is inherently post-settle, which sidesteps the stale-buffered

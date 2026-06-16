@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/pixel_color.dart';
@@ -41,6 +42,10 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
 
   bool get _connected => _output != null;
 
+  /// RTSP (media_kit) ships only on Windows; Android/iOS use the device camera.
+  static final bool _rtspSupported =
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+
   @override
   void dispose() {
     _chaseTimer?.cancel();
@@ -59,7 +64,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     if (cfg == null) return;
     // Release the manual-test output so the scan engine owns the controller.
     await _disconnect();
-    final CameraSource camera = _useRtsp
+    final CameraSource camera = (_useRtsp && _rtspSupported)
         ? RtspCameraSource(_rtspCtrl.text.trim())
         : CameraPackageSource();
     if (!mounted) return;
@@ -353,23 +358,25 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
             style: Theme.of(context).textTheme.bodySmall,
           ),
           const SizedBox(height: 12),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('Use RTSP network camera'),
-            subtitle: const Text(
-                'Off: device camera / Windows webcam / Connected Camera'),
-            value: _useRtsp,
-            onChanged: (v) => setState(() => _useRtsp = v),
-          ),
-          if (_useRtsp)
-            TextField(
-              controller: _rtspCtrl,
-              decoration: const InputDecoration(
-                labelText: 'RTSP URL',
-                border: OutlineInputBorder(),
-              ),
+          if (_rtspSupported) ...[
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Use RTSP network camera'),
+              subtitle: const Text(
+                  'Off: device camera / Windows webcam / Connected Camera'),
+              value: _useRtsp,
+              onChanged: (v) => setState(() => _useRtsp = v),
             ),
-          const SizedBox(height: 12),
+            if (_useRtsp)
+              TextField(
+                controller: _rtspCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'RTSP URL',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            const SizedBox(height: 12),
+          ],
           FilledButton.icon(
             onPressed: _startScan,
             icon: const Icon(Icons.camera_alt),

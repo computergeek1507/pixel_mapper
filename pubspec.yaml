@@ -38,11 +38,12 @@ dependencies:
   # Camera capture: native on Android/iOS, webcam/Connected Camera on Windows.
   camera: ^0.11.0
   camera_windows: ^0.2.0
-  # RTSP network-camera playback + frame grab (Windows path).
+  # RTSP network-camera playback + frame grab. Windows-only: the RTSP option is
+  # gated to Windows at runtime, and only the Windows native libs (libmpv) are
+  # bundled — Android/iOS builds don't ship media_kit's native payload.
   media_kit: ^1.1.0
   media_kit_video: ^1.2.0
-  # Native libs so media_kit (RTSP) actually runs; without this it warns at build.
-  media_kit_libs_video: ^1.0.4
+  media_kit_libs_windows_video: ^1.0.0
   # Pure-Dart image decode + bright-spot detection (no native deps).
   image: ^4.3.0
   # Write xLights .xmodel XML (inverse of xlights_layout's reader).
