@@ -36,10 +36,27 @@ void main() {
     });
 
     test('rejects overexposed/glare frames via maxAreaFraction', () {
-      // A huge bright blob covering most of the frame.
+      // A huge UNIFORMLY bright blob covering most of the frame: the hot core
+      // never localizes, so it stays rejected even with threshold tightening.
       final frame = _frame(dots: [(x: 160, y: 120, r: 200, v: 255)]);
       final spot = ImageBrightSpotDetector.detectInImage(frame);
       expect(spot, isNull);
+    });
+
+    test('locates a bloomed LED: hot core with a large fading halo', () {
+      // A bright LED close to the camera: a saturated core surrounded by a wide
+      // dimmer halo that alone exceeds maxAreaFraction. Drawn brightest-last so
+      // the core overwrites the halo centre.
+      final frame = _frame(dots: [
+        (x: 150, y: 90, r: 140, v: 120), // broad halo (> 25% of frame)
+        (x: 150, y: 90, r: 60, v: 200), // mid bloom
+        (x: 150, y: 90, r: 12, v: 255), // saturated core
+      ]);
+      final spot = ImageBrightSpotDetector.detectInImage(frame);
+
+      expect(spot, isNotNull, reason: 'bloomed LED should still be found');
+      expect(spot!.normX, closeTo(150 / 320, 0.04));
+      expect(spot.normY, closeTo(90 / 240, 0.04));
     });
 
     test('reference subtraction ignores a static ambient hotspot', () {

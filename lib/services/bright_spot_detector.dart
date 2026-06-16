@@ -130,29 +130,39 @@ class ImageBrightSpotDetector implements BrightSpotDetector {
     }
     if (peak < minBrightness) return null;
 
-    // Pass 2: intensity-weighted centroid over the blob.
-    final threshold = peak * relativeThreshold;
-    double sumX = 0, sumY = 0, sumW = 0;
-    var area = 0;
-    for (var y = 0; y < h; y++) {
-      for (var x = 0; x < w; x++) {
-        final s = signal(x, y);
-        if (s >= threshold) {
-          sumX += x * s;
-          sumY += y * s;
-          sumW += s;
-          area++;
+    // Pass 2: intensity-weighted centroid over the blob. A bright LED close to
+    // the camera blooms well past maxAreaFraction, but the bloom fades from a
+    // hot core, so tightening the threshold toward the peak isolates that core.
+    // Genuine glare/overexposure is uniformly bright and stays large even near
+    // the peak, so it's still rejected. Try the base threshold first (unchanged
+    // behaviour for normal dots), then progressively tighter ones.
+    final maxArea = maxAreaFraction * w * h;
+    for (final rel in <double>[relativeThreshold, 0.90, 0.95, 0.98]) {
+      if (rel < relativeThreshold) continue; // never loosen below the base
+      final threshold = peak * rel;
+      double sumX = 0, sumY = 0, sumW = 0;
+      var area = 0;
+      for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+          final s = signal(x, y);
+          if (s >= threshold) {
+            sumX += x * s;
+            sumY += y * s;
+            sumW += s;
+            area++;
+          }
         }
       }
-    }
-    if (sumW <= 0) return null;
-    if (area > maxAreaFraction * w * h) return null; // too diffuse / glare
+      if (sumW <= 0) continue;
+      if (area > maxArea) continue; // still too diffuse — tighten further
 
-    return BrightSpot(
-      normX: (sumX / sumW) / w,
-      normY: (sumY / sumW) / h,
-      brightness: peak,
-      area: area,
-    );
+      return BrightSpot(
+        normX: (sumX / sumW) / w,
+        normY: (sumY / sumW) / h,
+        brightness: peak,
+        area: area,
+      );
+    }
+    return null; // even the hot core is too diffuse -> real glare
   }
 }
