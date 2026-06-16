@@ -71,7 +71,9 @@ class _ReviewPageState extends State<ReviewPage> {
           ),
         ],
       ),
-      body: Column(
+      body: SafeArea(
+        top: false,
+        child: Column(
         children: [
           AspectRatio(
             aspectRatio: 4 / 3,
@@ -152,6 +154,7 @@ class _ReviewPageState extends State<ReviewPage> {
             ),
           ),
         ],
+        ),
       ),
     );
   }

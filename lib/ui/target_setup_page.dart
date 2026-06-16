@@ -36,6 +36,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
   String? _status;
 
   int _currentPixel = 0;
+  double _brightness = 1.0;
   Timer? _chaseTimer;
 
   bool get _connected => _output != null;
@@ -93,6 +94,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     try {
       await _output?.close();
       final out = createPixelOutput(cfg.protocol);
+      out.brightness = _brightness;
       await out.open(cfg);
       await out.blackout();
       setState(() {
@@ -124,6 +126,17 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     final clamped = index.clamp(0, out.pixelCount - 1);
     await out.lightSingle(clamped);
     setState(() => _currentPixel = clamped);
+  }
+
+  /// Updates the LED drive brightness and re-sends the current frame so the
+  /// change is visible without the user having to re-trigger a test.
+  void _setBrightness(double value) {
+    setState(() => _brightness = value);
+    final out = _output;
+    if (out == null) return;
+    out.brightness = value;
+    // Re-render whatever is currently displayed at the new brightness.
+    if (_chaseTimer == null) out.render();
   }
 
   Future<void> _allOn() async {
@@ -160,7 +173,9 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     final pixelCount = _output?.pixelCount ?? 0;
     return Scaffold(
       appBar: AppBar(title: const Text('Pixel Mapper — Target')),
-      body: ListView(
+      body: SafeArea(
+        top: false,
+        child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           TextField(
@@ -241,6 +256,22 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
           if (!_connected)
             const Text('Connect to enable pixel tests.')
           else ...[
+            Row(
+              children: [
+                const Text('Brightness'),
+                Expanded(
+                  child: Slider(
+                    value: _brightness,
+                    min: 0.05,
+                    max: 1.0,
+                    divisions: 19,
+                    label: '${(_brightness * 100).round()}%',
+                    onChanged: _setBrightness,
+                  ),
+                ),
+                Text('${(_brightness * 100).round()}%'),
+              ],
+            ),
             Text('Pixel ${_currentPixel + 1} of $pixelCount'),
             Slider(
               value: _currentPixel.toDouble(),
@@ -345,6 +376,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
             label: const Text('Start camera scan'),
           ),
         ],
+        ),
       ),
     );
   }

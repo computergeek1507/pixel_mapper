@@ -18,7 +18,7 @@ class DdpSender extends PixelOutput {
   int _sequence = 0;
 
   @override
-  Future<void> render() async {
+  Future<void> sendFrame() async {
     final s = socket;
     if (s == null) return;
     final dest = InternetAddress(cfg.ip);

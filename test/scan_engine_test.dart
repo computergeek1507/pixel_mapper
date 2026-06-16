@@ -30,7 +30,7 @@ class _FakeOutput extends PixelOutput {
   }
 
   @override
-  Future<void> render() async {
+  Future<void> sendFrame() async {
     // Find the brightest pixel in the buffer; that's what the "camera" sees.
     var best = -1;
     var bestVal = 0;

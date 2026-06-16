@@ -69,7 +69,9 @@ class _ExportPageState extends State<ExportPage> {
     final xml = _buildXml();
     return Scaffold(
       appBar: AppBar(title: const Text('Export .xmodel')),
-      body: ListView(
+      body: SafeArea(
+        top: false,
+        child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           TextField(
@@ -121,6 +123,7 @@ class _ExportPageState extends State<ExportPage> {
             ),
           ),
         ],
+        ),
       ),
     );
   }

@@ -69,7 +69,9 @@ class _ScanPageState extends State<ScanPage> {
     final running = _scan.state == ScanState.running;
     return Scaffold(
       appBar: AppBar(title: const Text('Scan')),
-      body: Column(
+      body: SafeArea(
+        top: false,
+        child: Column(
         children: [
           Expanded(
             child: Container(
@@ -135,6 +137,24 @@ class _ScanPageState extends State<ScanPage> {
                 ),
                 Row(
                   children: [
+                    const Text('Brightness'),
+                    Expanded(
+                      child: Slider(
+                        value: _scan.ledBrightness,
+                        min: 0.05,
+                        max: 1.0,
+                        divisions: 19,
+                        label: '${(_scan.ledBrightness * 100).round()}%',
+                        onChanged: running
+                            ? null
+                            : (v) => setState(() => _scan.ledBrightness = v),
+                      ),
+                    ),
+                    Text('${(_scan.ledBrightness * 100).round()}%'),
+                  ],
+                ),
+                Row(
+                  children: [
                     Expanded(
                       child: FilledButton.icon(
                         onPressed: (!_cameraReady || running)
@@ -163,6 +183,7 @@ class _ScanPageState extends State<ScanPage> {
             ),
           ),
         ],
+        ),
       ),
     );
   }

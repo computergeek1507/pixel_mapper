@@ -37,6 +37,11 @@ class ScanController extends ChangeNotifier {
   /// Pixel-sequencing strategy.
   ScanMode mode;
 
+  /// LED drive brightness (0.0–1.0). Lower it to avoid the camera clipping
+  /// bright pixels to white, which can defeat the base-3 colour read.
+  double get ledBrightness => output.brightness;
+  set ledBrightness(double value) => output.brightness = value;
+
   ScanController({
     required this.config,
     required this.camera,
