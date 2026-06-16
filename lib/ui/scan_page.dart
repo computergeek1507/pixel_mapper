@@ -207,8 +207,10 @@ class _ScanPageState extends State<ScanPage> {
             ? 'Preview lights on — aim the camera, then press Start.'
             : 'Ready. Dim the room and press Start.';
       case ScanState.done:
+        final blobs = _scan.lastBlobsFound;
+        final blobInfo = blobs != null ? ' · $blobs LEDs seen by camera' : '';
         return 'Done — ${_scan.detectedCount} of '
-            '${widget.config.pixelCount} pixels detected.';
+            '${widget.config.pixelCount} pixels detected$blobInfo.';
       case ScanState.cancelled:
         return 'Stopped — ${_scan.detectedCount} detected so far.';
       case ScanState.error:

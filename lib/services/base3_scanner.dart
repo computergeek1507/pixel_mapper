@@ -7,36 +7,54 @@ import 'package:image/image.dart' as img;
 import '../models/detected_point.dart';
 import 'base3_codec.dart';
 
-class _Blob {
-  final double cx;
-  final double cy;
-  final int area;
-  const _Blob(this.cx, this.cy, this.area);
+/// A detected LED candidate: a brightness peak in the max-projection signal.
+/// [reach] is how far to sample colour around it (capped at half the distance
+/// to the nearest other peak, so neighbouring LEDs don't bleed into the read).
+class _Peak {
+  final int x;
+  final int y;
+  final int signal;
+  int reach;
+  _Peak(this.x, this.y, this.signal, this.reach);
 }
 
 class _Candidate {
   final double normX;
   final double normY;
-  final int area;
-  const _Candidate(this.normX, this.normY, this.area);
+  final int signal;
+  const _Candidate(this.normX, this.normY, this.signal);
+}
+
+/// Result of a base-3 decode: the per-pixel points plus how many distinct LED
+/// peaks were found (a diagnostic: peaks far below the pixel count means the
+/// camera can't separate the LEDs, not that decoding failed).
+class Base3ScanResult {
+  final List<DetectedPoint> points;
+  final int blobsFound;
+  const Base3ScanResult(this.points, this.blobsFound);
 }
 
 /// Decodes a base-3 RGB capture (the xLights "non-linear pixel pattern") into
 /// per-pixel positions. Every pixel is lit in every frame; in frame `i` it
-/// shows the colour of the i-th base-3 digit of its index. We find every lit
-/// blob, read its colour in each frame, and decode the digit string back to a
-/// pixel number (rejecting blobs whose checksum fails).
+/// shows the colour of the i-th base-3 digit of its index.
+///
+/// Because every LED is lit in every frame, a single bright "blob" mask would
+/// merge adjacent LEDs, so we instead find every brightness *peak* (each LED is
+/// a local maximum), read its colour per frame, and match the colour sequence
+/// to the nearest valid codeword.
 class Base3Scanner {
   /// Detection signal (max RGB channel, ambient-subtracted) threshold.
   final int detectThreshold;
 
-  /// Minimum connected-component area (in analyzed pixels) to count as a blob.
-  final int minBlobArea;
+  /// A pixel is a peak candidate if no neighbour within this radius is brighter.
+  final int peakWindow;
 
-  /// Minimum half-size of the colour-sampling window around a blob centroid.
-  /// The actual window grows with the blob so it reaches the coloured halo even
-  /// when the centre has bloomed to white.
+  /// Minimum half-size of the colour-sampling window around a peak.
   final int sampleRadius;
+
+  /// Hard cap on the colour-sampling window, so an isolated bloomed LED reads
+  /// its coloured halo without an unbounded scan.
+  final int maxColorReach;
 
   /// Minimum per-pixel chroma (dominant channel minus the channel minimum) for
   /// a sample to vote on the colour. Filters out white/grey bloom and ambient
@@ -48,27 +66,23 @@ class Base3Scanner {
   /// recoverable by the codeword matcher; a confident wrong guess often isn't.
   final double confidenceRatio;
 
-  /// Radius of the morphological closing (dilate then erode) applied to the
-  /// blob mask before labeling. Fills small gaps so a single LED that the
-  /// pattern fragments into pieces stays one blob. 0 disables it.
-  final int morphRadius;
-
-  /// Frames wider than this are downscaled before analysis.
+  /// Frames wider than this are downscaled before analysis. Higher values keep
+  /// densely-packed LEDs separable at the cost of more work.
   final int analyzeWidth;
 
   const Base3Scanner({
     this.detectThreshold = 50,
-    this.minBlobArea = 2,
+    this.peakWindow = 1,
     this.sampleRadius = 2,
+    this.maxColorReach = 8,
     this.chromaFloor = 12,
     this.confidenceRatio = 1.25,
-    this.morphRadius = 1,
-    this.analyzeWidth = 640,
+    this.analyzeWidth = 1280,
   });
 
   /// Decodes encoded image bytes (one per base-3 frame). Suitable for running
   /// inside `Isolate.run`.
-  List<DetectedPoint> decodeBytes(
+  Base3ScanResult decodeBytes(
     List<Uint8List> frameBytes,
     Uint8List? referenceBytes,
     int numPixels,
@@ -77,7 +91,8 @@ class Base3Scanner {
     for (final b in frameBytes) {
       final decoded = img.decodeImage(b);
       if (decoded == null) {
-        return List.generate(numPixels, (i) => DetectedPoint(nodeIndex: i));
+        return Base3ScanResult(
+            List.generate(numPixels, (i) => DetectedPoint(nodeIndex: i)), 0);
       }
       frames.add(decoded.width > analyzeWidth
           ? img.copyResize(decoded, width: analyzeWidth)
@@ -94,14 +109,14 @@ class Base3Scanner {
   }
 
   /// Core decode on already-decoded frames. Exposed for unit testing.
-  List<DetectedPoint> decodeImages(
+  Base3ScanResult decodeImages(
     List<img.Image> frames,
     img.Image? reference,
     int numPixels,
   ) {
     final points =
         List.generate(numPixels, (i) => DetectedPoint(nodeIndex: i));
-    if (frames.isEmpty) return points;
+    if (frames.isEmpty) return Base3ScanResult(points, 0);
 
     final w = frames.first.width;
     final h = frames.first.height;
@@ -129,12 +144,12 @@ class Base3Scanner {
       }
     }
 
-    // 2. Threshold -> binary mask -> optional morphological closing -> labels.
-    final mask = _maskFromSignal(signal, w, h);
-    final blobs = _connectedComponents(mask, w, h);
+    // 2. Find LED peaks (local maxima) and cap each one's colour-sampling reach
+    //    at half the gap to its nearest neighbour.
+    final peaks = _findPeaks(signal, w, h);
 
     // The valid codewords, regenerated exactly as the scan side drove them, as
-    // digit lists. Decoding by nearest codeword (with erasures) lets a blob
+    // digit lists. Decoding by nearest codeword (with erasures) lets a peak
     // with one bad or unreadable frame still resolve, instead of being dropped.
     final bits = Base3Codec.bitsFor(numPixels);
     final codes = List<List<int>>.generate(numPixels, (j) {
@@ -142,16 +157,16 @@ class Base3Scanner {
       return List<int>.generate(s.length, (i) => s.codeUnitAt(i) - 0x30);
     });
 
-    // 3. Read each blob's colour sequence and match it to a pixel.
+    // 3. Read each peak's colour sequence and match it to a pixel.
     final best = <int, _Candidate>{};
-    for (final b in blobs) {
-      final read = [for (final f in frames) _dominantDigit(f, b)];
+    for (final p in peaks) {
+      final read = [for (final f in frames) _dominantDigit(f, p, signal, w)];
       final pixel = _matchCodeword(read, codes);
       if (pixel < 1 || pixel > numPixels) continue;
-      // On duplicate decode, keep the larger blob.
-      final cand = _Candidate(b.cx / w, b.cy / h, b.area);
+      // On duplicate decode, keep the brighter peak.
+      final cand = _Candidate(p.x / w, p.y / h, p.signal);
       final prev = best[pixel];
-      if (prev == null || cand.area > prev.area) best[pixel] = cand;
+      if (prev == null || cand.signal > prev.signal) best[pixel] = cand;
     }
 
     best.forEach((pixel, cand) {
@@ -159,7 +174,7 @@ class Base3Scanner {
       point.screenXY = Offset(cand.normX, cand.normY);
       point.brightness = 255;
     });
-    return points;
+    return Base3ScanResult(points, peaks.length);
   }
 
   static int _maxChannel(img.Pixel p) {
@@ -169,29 +184,104 @@ class Base3Scanner {
     return max(r, max(g, b));
   }
 
-  /// Classifies blob [b]'s colour in frame [f] as a base-3 digit (0=R,1=G,2=B),
-  /// or -1 if no sample is colourful enough to decide.
+  /// Finds one LED peak per local-maximum region. Every pixel that no neighbour
+  /// outshines is flagged; connected flagged pixels (a flat bright core) collapse
+  /// to a single peak at their centroid. Each peak's colour-sampling reach is
+  /// then capped at half the distance to its nearest neighbour, so adjacent LEDs
+  /// never bleed into one another's colour read.
+  List<_Peak> _findPeaks(Uint8List signal, int w, int h) {
+    final isMax = Uint8List(w * h);
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        final s = signal[y * w + x];
+        if (s < detectThreshold) continue;
+        var peak = true;
+        for (var dy = -peakWindow; dy <= peakWindow && peak; dy++) {
+          for (var dx = -peakWindow; dx <= peakWindow; dx++) {
+            final nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            if (signal[ny * w + nx] > s) {
+              peak = false;
+              break;
+            }
+          }
+        }
+        if (peak) isMax[y * w + x] = 1;
+      }
+    }
+
+    // Connected components over the local-max mask -> one peak per region.
+    final visited = Uint8List(w * h);
+    final peaks = <_Peak>[];
+    final queue = <int>[];
+    for (var start = 0; start < isMax.length; start++) {
+      if (visited[start] == 1 || isMax[start] == 0) continue;
+      visited[start] = 1;
+      queue
+        ..clear()
+        ..add(start);
+      var sumX = 0, sumY = 0, count = 0, peakSig = 0;
+      while (queue.isNotEmpty) {
+        final idx = queue.removeLast();
+        final x = idx % w, y = idx ~/ w;
+        sumX += x;
+        sumY += y;
+        count++;
+        if (signal[idx] > peakSig) peakSig = signal[idx];
+        for (var dy = -1; dy <= 1; dy++) {
+          for (var dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            final nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            final nidx = ny * w + nx;
+            if (visited[nidx] == 1 || isMax[nidx] == 0) continue;
+            visited[nidx] = 1;
+            queue.add(nidx);
+          }
+        }
+      }
+      peaks.add(_Peak(
+          (sumX / count).round(), (sumY / count).round(), peakSig, sampleRadius));
+    }
+
+    // Reach = half the distance to the nearest other peak (clamped), so the
+    // colour sample stays on this LED even when neighbours are close.
+    for (final p in peaks) {
+      var nearest = 1 << 30;
+      for (final o in peaks) {
+        if (identical(o, p)) continue;
+        final ddx = o.x - p.x, ddy = o.y - p.y;
+        final d2 = ddx * ddx + ddy * ddy;
+        if (d2 < nearest) nearest = d2;
+      }
+      final half = (sqrt(nearest) / 2).floor();
+      p.reach = half.clamp(sampleRadius, maxColorReach);
+    }
+    return peaks;
+  }
+
+  /// Classifies a peak's colour in frame [f] as a base-3 digit (0=R,1=G,2=B),
+  /// or -1 (erasure) if no sample is colourful enough or the vote is too close.
   ///
   /// Each sample votes by *chroma* — its channel value minus the per-pixel
-  /// minimum — which discards the white/grey component. That makes the read
-  /// robust to a centre blown out to white (the coloured halo still votes) and
-  /// to the camera's auto white-balance tinting the whole frame. The sampling
-  /// window grows with the blob so it always reaches that halo.
-  int _dominantDigit(img.Image f, _Blob b) {
-    final cx = b.cx.round();
-    final cy = b.cy.round();
-    // Reach roughly to the blob edge (area ~= pi r^2), but at least sampleRadius.
-    final reach = max(sampleRadius, (sqrt(b.area / pi)).round());
+  /// minimum — which discards the white/grey component, so a centre blown out
+  /// to white (the coloured halo still votes) and an auto white-balance tint
+  /// don't fool it.
+  int _dominantDigit(img.Image f, _Peak p, Uint8List signal, int w) {
+    final reach = p.reach;
     var vr = 0, vg = 0, vb = 0;
     for (var dy = -reach; dy <= reach; dy++) {
       for (var dx = -reach; dx <= reach; dx++) {
-        final x = cx + dx;
-        final y = cy + dy;
+        final x = p.x + dx;
+        final y = p.y + dy;
         if (x < 0 || y < 0 || x >= f.width || y >= f.height) continue;
-        final p = f.getPixel(x, y);
-        final r = p.r.toInt();
-        final g = p.g.toInt();
-        final b0 = p.b.toInt();
+        // Only sample LED pixels (bright in the max-projection); skip the
+        // background, whose colour may be tinted by the camera white-balance.
+        if (signal[y * w + x] < detectThreshold) continue;
+        final px = f.getPixel(x, y);
+        final r = px.r.toInt();
+        final g = px.g.toInt();
+        final b0 = px.b.toInt();
         final m = min(r, min(g, b0)); // white/grey/ambient component
         final cr = r - m, cg = g - m, cb = b0 - m; // chroma per channel
         final topc = max(cr, max(cg, cb));
@@ -254,99 +344,5 @@ class Base3Scanner {
     if (bestCost > maxAcceptCost) return -1;
     if (secondCost - bestCost < minMargin) return -1; // ambiguous
     return bestPixel;
-  }
-
-  /// Thresholds [signal] into a binary mask, then optionally closes it
-  /// (dilate then erode) to fill small gaps and consolidate fragmented blobs.
-  Uint8List _maskFromSignal(Uint8List signal, int w, int h) {
-    final mask = Uint8List(signal.length);
-    for (var i = 0; i < signal.length; i++) {
-      mask[i] = signal[i] >= detectThreshold ? 1 : 0;
-    }
-    if (morphRadius <= 0) return mask;
-    return _erode(_dilate(mask, w, h, morphRadius), w, h, morphRadius);
-  }
-
-  /// Morphological dilation with a square structuring element of [r].
-  static Uint8List _dilate(Uint8List m, int w, int h, int r) {
-    final out = Uint8List(w * h);
-    for (var y = 0; y < h; y++) {
-      for (var x = 0; x < w; x++) {
-        var on = 0;
-        for (var dy = -r; dy <= r && on == 0; dy++) {
-          for (var dx = -r; dx <= r; dx++) {
-            final nx = x + dx, ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-            if (m[ny * w + nx] == 1) {
-              on = 1;
-              break;
-            }
-          }
-        }
-        out[y * w + x] = on;
-      }
-    }
-    return out;
-  }
-
-  /// Morphological erosion with a square structuring element of [r].
-  static Uint8List _erode(Uint8List m, int w, int h, int r) {
-    final out = Uint8List(w * h);
-    for (var y = 0; y < h; y++) {
-      for (var x = 0; x < w; x++) {
-        var keep = 1;
-        for (var dy = -r; dy <= r && keep == 1; dy++) {
-          for (var dx = -r; dx <= r; dx++) {
-            final nx = x + dx, ny = y + dy;
-            // Border pixels can't be fully covered -> treat as eroded away.
-            if (nx < 0 || ny < 0 || nx >= w || ny >= h || m[ny * w + nx] == 0) {
-              keep = 0;
-              break;
-            }
-          }
-        }
-        out[y * w + x] = keep;
-      }
-    }
-    return out;
-  }
-
-  /// BFS connected-component labeling over a binary [mask].
-  List<_Blob> _connectedComponents(Uint8List mask, int w, int h) {
-    final visited = Uint8List(w * h);
-    final blobs = <_Blob>[];
-    final queue = <int>[];
-    for (var start = 0; start < mask.length; start++) {
-      if (visited[start] == 1 || mask[start] == 0) continue;
-      visited[start] = 1;
-      queue
-        ..clear()
-        ..add(start);
-      var sumX = 0, sumY = 0, count = 0;
-      while (queue.isNotEmpty) {
-        final idx = queue.removeLast();
-        final x = idx % w;
-        final y = idx ~/ w;
-        sumX += x;
-        sumY += y;
-        count++;
-        for (var dy = -1; dy <= 1; dy++) {
-          for (var dx = -1; dx <= 1; dx++) {
-            if (dx == 0 && dy == 0) continue;
-            final nx = x + dx;
-            final ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-            final nidx = ny * w + nx;
-            if (visited[nidx] == 1 || mask[nidx] == 0) continue;
-            visited[nidx] = 1;
-            queue.add(nidx);
-          }
-        }
-      }
-      if (count >= minBlobArea) {
-        blobs.add(_Blob(sumX / count, sumY / count, count));
-      }
-    }
-    return blobs;
   }
 }

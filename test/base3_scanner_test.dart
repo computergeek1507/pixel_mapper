@@ -49,7 +49,7 @@ void main() {
     expect(frames.length, 5);
 
     const scanner = Base3Scanner();
-    final points = scanner.decodeImages(frames, null, numPixels);
+    final points = scanner.decodeImages(frames, null, numPixels).points;
 
     for (final e in positions.entries) {
       final p = points[e.key];
@@ -79,7 +79,7 @@ void main() {
     expect(frames.length, 7);
 
     const scanner = Base3Scanner();
-    final points = scanner.decodeImages(frames, null, numPixels);
+    final points = scanner.decodeImages(frames, null, numPixels).points;
 
     final detected = points.where((p) => p.detected).length;
     // Allow a tiny margin for any blob-merge edge cases.
@@ -105,7 +105,7 @@ void main() {
     img.fill(refRaw, color: img.ColorRgb8(4, 4, 4));
     final ref = warm(refRaw);
 
-    final points = const Base3Scanner().decodeImages(cast, ref, numPixels);
+    final points = const Base3Scanner().decodeImages(cast, ref, numPixels).points;
     for (final node in positions.keys) {
       expect(points[node].detected, isTrue, reason: 'node $node');
     }
@@ -135,7 +135,7 @@ void main() {
       frames.add(im);
     }
 
-    final points = const Base3Scanner().decodeImages(frames, null, numPixels);
+    final points = const Base3Scanner().decodeImages(frames, null, numPixels).points;
     expect(points[node].detected, isTrue);
   });
 
@@ -166,7 +166,7 @@ void main() {
       frames.add(im);
     }
 
-    final points = const Base3Scanner().decodeImages(frames, null, numPixels);
+    final points = const Base3Scanner().decodeImages(frames, null, numPixels).points;
     expect(points[node].detected, isTrue);
   });
 }

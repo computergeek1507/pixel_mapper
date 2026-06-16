@@ -96,6 +96,11 @@ class ScanController extends ChangeNotifier {
   int stepsTotal = 0;
   String? error;
 
+  /// Distinct LED peaks found by the last fast (base-3) decode. If this is far
+  /// below the pixel count, the camera couldn't separate the LEDs (move back /
+  /// raise resolution) rather than the decode failing.
+  int? lastBlobsFound;
+
   /// Most recent captured frame (for live preview) and the black reference.
   Uint8List? lastFrame;
   Uint8List? referenceFrame;
@@ -112,6 +117,7 @@ class ScanController extends ChangeNotifier {
     _cancel = false;
     _framing = false; // the scan drives the lights from here
     error = null;
+    lastBlobsFound = null;
     state = ScanState.running;
     stepsTotal = mode == ScanMode.fastBase3
         ? Base3Codec.bitsFor(config.pixelCount)
@@ -193,11 +199,12 @@ class ScanController extends ChangeNotifier {
     }
 
     final refBytes = referenceFrame;
-    final decoded = await Isolate.run(
+    final result = await Isolate.run(
         () => const Base3Scanner().decodeBytes(frames, refBytes, numPixels));
+    lastBlobsFound = result.blobsFound;
     points
       ..clear()
-      ..addAll(decoded);
+      ..addAll(result.points);
   }
 
   /// Re-scans a single pixel (e.g. one the user flagged as wrong in review).
