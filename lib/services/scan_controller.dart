@@ -4,6 +4,7 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 
 import '../models/detected_point.dart';
+import '../models/pixel_color.dart';
 import '../models/target_config.dart';
 import 'base3_codec.dart';
 import 'base3_scanner.dart';
@@ -40,7 +41,41 @@ class ScanController extends ChangeNotifier {
   /// LED drive brightness (0.0–1.0). Lower it to avoid the camera clipping
   /// bright pixels to white, which can defeat the base-3 colour read.
   double get ledBrightness => output.brightness;
-  set ledBrightness(double value) => output.brightness = value;
+  set ledBrightness(double value) {
+    output.brightness = value;
+    // Reflect the new brightness immediately on the framing preview lights.
+    if (_framing && state != ScanState.running) {
+      output.setAll(PixelColor.white);
+      output.render();
+    }
+  }
+
+  /// Whether the framing preview ("light every pixel so you can aim the camera
+  /// before scanning") is currently on.
+  bool _framing = false;
+  bool get framing => _framing;
+
+  /// Lights every pixel white (at the current [ledBrightness]) so the prop is
+  /// visible in the live preview for framing, or blacks them out again. No-op
+  /// while a scan is running.
+  Future<void> setFraming(bool on) async {
+    if (state == ScanState.running) return;
+    _framing = on;
+    notifyListeners();
+    try {
+      if (!output.isOpen) await output.open(config);
+      if (on) {
+        output.setAll(PixelColor.white);
+        await output.render();
+      } else {
+        await output.blackout();
+      }
+    } catch (e) {
+      error = e.toString();
+      _framing = false;
+      notifyListeners();
+    }
+  }
 
   ScanController({
     required this.config,
@@ -74,6 +109,7 @@ class ScanController extends ChangeNotifier {
   Future<void> start() async {
     if (state == ScanState.running) return;
     _cancel = false;
+    _framing = false; // the scan drives the lights from here
     error = null;
     state = ScanState.running;
     stepsTotal = mode == ScanMode.fastBase3

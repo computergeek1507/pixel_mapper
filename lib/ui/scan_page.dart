@@ -153,6 +153,17 @@ class _ScanPageState extends State<ScanPage> {
                     Text('${(_scan.ledBrightness * 100).round()}%'),
                   ],
                 ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  secondary: const Icon(Icons.lightbulb_outline),
+                  title: const Text('Preview lights (all on)'),
+                  subtitle: const Text('Light every pixel to frame the camera'),
+                  value: _scan.framing,
+                  onChanged: (running || !_cameraReady)
+                      ? null
+                      : (v) => _scan.setFraming(v),
+                ),
                 Row(
                   children: [
                     Expanded(
@@ -191,9 +202,10 @@ class _ScanPageState extends State<ScanPage> {
   String _statusText() {
     switch (_scan.state) {
       case ScanState.idle:
-        return _cameraReady
-            ? 'Ready. Dim the room and press Start.'
-            : 'Initializing camera…';
+        if (!_cameraReady) return 'Initializing camera…';
+        return _scan.framing
+            ? 'Preview lights on — aim the camera, then press Start.'
+            : 'Ready. Dim the room and press Start.';
       case ScanState.done:
         return 'Done — ${_scan.detectedCount} of '
             '${widget.config.pixelCount} pixels detected.';
