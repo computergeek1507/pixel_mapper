@@ -45,7 +45,7 @@ class ScanController extends ChangeNotifier {
     output.brightness = value;
     // Reflect the new brightness immediately on the framing preview lights.
     if (_framing && state != ScanState.running) {
-      output.setAll(PixelColor.white);
+      output.setAll(PixelColor.blue);
       output.render();
     }
   }
@@ -55,9 +55,10 @@ class ScanController extends ChangeNotifier {
   bool _framing = false;
   bool get framing => _framing;
 
-  /// Lights every pixel white (at the current [ledBrightness]) so the prop is
-  /// visible in the live preview for framing, or blacks them out again. No-op
-  /// while a scan is running.
+  /// Lights every pixel blue (at the current [ledBrightness]) so the prop is
+  /// visible in the live preview for framing, or blacks them out again. Blue is
+  /// the dimmest channel for most cameras, so it frames without blooming to
+  /// white. No-op while a scan is running.
   Future<void> setFraming(bool on) async {
     if (state == ScanState.running) return;
     _framing = on;
@@ -65,7 +66,7 @@ class ScanController extends ChangeNotifier {
     try {
       if (!output.isOpen) await output.open(config);
       if (on) {
-        output.setAll(PixelColor.white);
+        output.setAll(PixelColor.blue);
         await output.render();
       } else {
         await output.blackout();

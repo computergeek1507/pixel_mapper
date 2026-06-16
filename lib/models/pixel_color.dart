@@ -10,6 +10,7 @@ class PixelColor {
 
   static const PixelColor off = PixelColor(0, 0, 0);
   static const PixelColor white = PixelColor(255, 255, 255);
+  static const PixelColor blue = PixelColor(0, 0, 255);
 
   @override
   bool operator ==(Object other) =>
