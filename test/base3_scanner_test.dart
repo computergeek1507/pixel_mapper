@@ -111,6 +111,34 @@ void main() {
     }
   });
 
+  test('recovers a pixel with one unreadable (erasure) frame', () {
+    // Render a normal capture, then wipe one pixel's colour to grey in a single
+    // frame so that frame reads as an erasure. The old all-or-nothing decode
+    // dropped the pixel; the codeword matcher should still resolve it.
+    const numPixels = 20;
+    const node = 12;
+    const pos = Offset(160, 120);
+    final bits = Base3Codec.bitsFor(numPixels);
+    final code = Base3Codec.encode(node + 1, bits);
+    final frames = <img.Image>[];
+    for (var i = 0; i < bits; i++) {
+      final im = img.Image(width: 320, height: 240);
+      img.fill(im, color: img.ColorRgb8(4, 4, 4));
+      // Frame index 1 is colourless grey (an erasure); the rest are the colour.
+      final c = i == 1
+          ? img.ColorRgb8(120, 120, 120)
+          : () {
+              final pc = Base3Codec.colorForDigit(code.codeUnitAt(i) - 0x30);
+              return img.ColorRgb8(pc.r, pc.g, pc.b);
+            }();
+      img.fillCircle(im, x: pos.dx.round(), y: pos.dy.round(), radius: 5, color: c);
+      frames.add(im);
+    }
+
+    final points = const Base3Scanner().decodeImages(frames, null, numPixels);
+    expect(points[node].detected, isTrue);
+  });
+
   test('decodes a bloomed pixel: white-clipped core with a coloured halo', () {
     // Bright LEDs photographed close up clip to white at the centre; only the
     // halo carries the hue. The colour vote must come from the halo.

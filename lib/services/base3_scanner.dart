@@ -43,6 +43,16 @@ class Base3Scanner {
   /// so they can't be misclassified as a colour.
   final int chromaFloor;
 
+  /// The winning colour vote must beat the runner-up by at least this ratio,
+  /// otherwise the frame is read as an *erasure* (unknown). An erasure is
+  /// recoverable by the codeword matcher; a confident wrong guess often isn't.
+  final double confidenceRatio;
+
+  /// Radius of the morphological closing (dilate then erode) applied to the
+  /// blob mask before labeling. Fills small gaps so a single LED that the
+  /// pattern fragments into pieces stays one blob. 0 disables it.
+  final int morphRadius;
+
   /// Frames wider than this are downscaled before analysis.
   final int analyzeWidth;
 
@@ -51,6 +61,8 @@ class Base3Scanner {
     this.minBlobArea = 2,
     this.sampleRadius = 2,
     this.chromaFloor = 12,
+    this.confidenceRatio = 1.25,
+    this.morphRadius = 1,
     this.analyzeWidth = 640,
   });
 
@@ -117,25 +129,25 @@ class Base3Scanner {
       }
     }
 
-    // 2. Threshold + connected components -> blob centroids.
-    final blobs = _connectedComponents(signal, w, h);
+    // 2. Threshold -> binary mask -> optional morphological closing -> labels.
+    final mask = _maskFromSignal(signal, w, h);
+    final blobs = _connectedComponents(mask, w, h);
 
-    // 3. Read each blob's colour sequence, decode to a pixel number.
+    // The valid codewords, regenerated exactly as the scan side drove them, as
+    // digit lists. Decoding by nearest codeword (with erasures) lets a blob
+    // with one bad or unreadable frame still resolve, instead of being dropped.
+    final bits = Base3Codec.bitsFor(numPixels);
+    final codes = List<List<int>>.generate(numPixels, (j) {
+      final s = Base3Codec.encode(j + 1, bits);
+      return List<int>.generate(s.length, (i) => s.codeUnitAt(i) - 0x30);
+    });
+
+    // 3. Read each blob's colour sequence and match it to a pixel.
     final best = <int, _Candidate>{};
     for (final b in blobs) {
-      final digits = StringBuffer();
-      var ok = true;
-      for (final f in frames) {
-        final d = _dominantDigit(f, b);
-        if (d < 0) {
-          ok = false;
-          break;
-        }
-        digits.write(d);
-      }
-      if (!ok) continue;
-      final pixel = Base3Codec.decode(digits.toString());
-      if (pixel == null || pixel < 1 || pixel > numPixels) continue;
+      final read = [for (final f in frames) _dominantDigit(f, b)];
+      final pixel = _matchCodeword(read, codes);
+      if (pixel < 1 || pixel > numPixels) continue;
       // On duplicate decode, keep the larger blob.
       final cand = _Candidate(b.cx / w, b.cy / h, b.area);
       final prev = best[pixel];
@@ -195,18 +207,117 @@ class Base3Scanner {
     }
     final top = max(vr, max(vg, vb));
     if (top <= 0) return -1; // nothing colourful enough to classify
+    // Read as an erasure unless the winner clearly beats the runner-up.
+    final second = (top == vr)
+        ? max(vg, vb)
+        : (top == vg ? max(vr, vb) : max(vr, vg));
+    if (top < second * confidenceRatio) return -1;
     if (top == vr) return 0;
     if (top == vg) return 1;
     return 2;
   }
 
-  /// BFS connected-component labeling over the thresholded signal.
-  List<_Blob> _connectedComponents(Uint8List signal, int w, int h) {
+  /// Matches a per-frame digit read (with -1 for erasures) to the nearest valid
+  /// codeword and returns its 1-based pixel number, or -1 if no match is
+  /// confident and unambiguous. An erasure costs less than a substitution, so a
+  /// single unreadable frame is recoverable; a single wrong frame is only
+  /// corrected when one codeword is clearly closest.
+  int _matchCodeword(List<int> read, List<List<int>> codes) {
+    const erasureCost = 1;
+    const substitutionCost = 2;
+    const maxAcceptCost = 2; // up to 2 erasures, or 1 substitution
+    const minMargin = 2; // runner-up must be clearly worse
+
+    var bestCost = 1 << 30, secondCost = 1 << 30, bestPixel = -1;
+    final n = read.length;
+    for (var j = 0; j < codes.length; j++) {
+      final code = codes[j];
+      final len = n < code.length ? n : code.length;
+      var cost = 0;
+      for (var i = 0; i < len; i++) {
+        final r = read[i];
+        if (r < 0) {
+          cost += erasureCost;
+        } else if (r != code[i]) {
+          cost += substitutionCost;
+        }
+        if (cost >= secondCost) break; // can't make the top two
+      }
+      if (cost < bestCost) {
+        secondCost = bestCost;
+        bestCost = cost;
+        bestPixel = j + 1;
+      } else if (cost < secondCost) {
+        secondCost = cost;
+      }
+    }
+    if (bestCost > maxAcceptCost) return -1;
+    if (secondCost - bestCost < minMargin) return -1; // ambiguous
+    return bestPixel;
+  }
+
+  /// Thresholds [signal] into a binary mask, then optionally closes it
+  /// (dilate then erode) to fill small gaps and consolidate fragmented blobs.
+  Uint8List _maskFromSignal(Uint8List signal, int w, int h) {
+    final mask = Uint8List(signal.length);
+    for (var i = 0; i < signal.length; i++) {
+      mask[i] = signal[i] >= detectThreshold ? 1 : 0;
+    }
+    if (morphRadius <= 0) return mask;
+    return _erode(_dilate(mask, w, h, morphRadius), w, h, morphRadius);
+  }
+
+  /// Morphological dilation with a square structuring element of [r].
+  static Uint8List _dilate(Uint8List m, int w, int h, int r) {
+    final out = Uint8List(w * h);
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var on = 0;
+        for (var dy = -r; dy <= r && on == 0; dy++) {
+          for (var dx = -r; dx <= r; dx++) {
+            final nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            if (m[ny * w + nx] == 1) {
+              on = 1;
+              break;
+            }
+          }
+        }
+        out[y * w + x] = on;
+      }
+    }
+    return out;
+  }
+
+  /// Morphological erosion with a square structuring element of [r].
+  static Uint8List _erode(Uint8List m, int w, int h, int r) {
+    final out = Uint8List(w * h);
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var keep = 1;
+        for (var dy = -r; dy <= r && keep == 1; dy++) {
+          for (var dx = -r; dx <= r; dx++) {
+            final nx = x + dx, ny = y + dy;
+            // Border pixels can't be fully covered -> treat as eroded away.
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h || m[ny * w + nx] == 0) {
+              keep = 0;
+              break;
+            }
+          }
+        }
+        out[y * w + x] = keep;
+      }
+    }
+    return out;
+  }
+
+  /// BFS connected-component labeling over a binary [mask].
+  List<_Blob> _connectedComponents(Uint8List mask, int w, int h) {
     final visited = Uint8List(w * h);
     final blobs = <_Blob>[];
     final queue = <int>[];
-    for (var start = 0; start < signal.length; start++) {
-      if (visited[start] == 1 || signal[start] < detectThreshold) continue;
+    for (var start = 0; start < mask.length; start++) {
+      if (visited[start] == 1 || mask[start] == 0) continue;
       visited[start] = 1;
       queue
         ..clear()
@@ -226,7 +337,7 @@ class Base3Scanner {
             final ny = y + dy;
             if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
             final nidx = ny * w + nx;
-            if (visited[nidx] == 1 || signal[nidx] < detectThreshold) continue;
+            if (visited[nidx] == 1 || mask[nidx] == 0) continue;
             visited[nidx] = 1;
             queue.add(nidx);
           }
