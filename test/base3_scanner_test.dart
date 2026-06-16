@@ -85,4 +85,60 @@ void main() {
     // Allow a tiny margin for any blob-merge edge cases.
     expect(detected, greaterThanOrEqualTo(numPixels - 2));
   });
+
+  test('decodes despite a white-balance colour cast on every channel', () {
+    // Auto white-balance (exposure is locked but WB isn't) tints the whole
+    // frame. A raw max-channel read would skew toward the cast; chroma must not.
+    const numPixels = 20;
+    final positions = {
+      0: const Offset(40, 40),
+      5: const Offset(160, 60),
+      12: const Offset(250, 180),
+    };
+    // Warm cast: lift red+green, leaving blue alone, on every pixel — including
+    // the black reference frame (same camera, same cast), so the real pipeline's
+    // reference subtraction removes the ambient baseline as it would live.
+    img.Image warm(img.Image f) =>
+        img.colorOffset(f, red: 70, green: 50, blue: 0);
+    final cast = _makeFrames(numPixels, positions).map(warm).toList();
+    final refRaw = img.Image(width: 320, height: 240);
+    img.fill(refRaw, color: img.ColorRgb8(4, 4, 4));
+    final ref = warm(refRaw);
+
+    final points = const Base3Scanner().decodeImages(cast, ref, numPixels);
+    for (final node in positions.keys) {
+      expect(points[node].detected, isTrue, reason: 'node $node');
+    }
+  });
+
+  test('decodes a bloomed pixel: white-clipped core with a coloured halo', () {
+    // Bright LEDs photographed close up clip to white at the centre; only the
+    // halo carries the hue. The colour vote must come from the halo.
+    const numPixels = 20;
+    const center = Offset(160, 120);
+    const node = 5;
+    final bits = Base3Codec.bitsFor(numPixels);
+    final code = Base3Codec.encode(node + 1, bits);
+    final frames = <img.Image>[];
+    for (var i = 0; i < bits; i++) {
+      final im = img.Image(width: 320, height: 240);
+      img.fill(im, color: img.ColorRgb8(3, 3, 3));
+      final c = Base3Codec.colorForDigit(code.codeUnitAt(i) - 0x30);
+      // Coloured halo (radius 7) then a blown-out white core (radius 3).
+      img.fillCircle(im,
+          x: center.dx.round(),
+          y: center.dy.round(),
+          radius: 7,
+          color: img.ColorRgb8(c.r, c.g, c.b));
+      img.fillCircle(im,
+          x: center.dx.round(),
+          y: center.dy.round(),
+          radius: 3,
+          color: img.ColorRgb8(255, 255, 255));
+      frames.add(im);
+    }
+
+    final points = const Base3Scanner().decodeImages(frames, null, numPixels);
+    expect(points[node].detected, isTrue);
+  });
 }

@@ -33,8 +33,15 @@ class Base3Scanner {
   /// Minimum connected-component area (in analyzed pixels) to count as a blob.
   final int minBlobArea;
 
-  /// Half-size of the colour-sampling window around a blob centroid.
+  /// Minimum half-size of the colour-sampling window around a blob centroid.
+  /// The actual window grows with the blob so it reaches the coloured halo even
+  /// when the centre has bloomed to white.
   final int sampleRadius;
+
+  /// Minimum per-pixel chroma (dominant channel minus the channel minimum) for
+  /// a sample to vote on the colour. Filters out white/grey bloom and ambient
+  /// so they can't be misclassified as a colour.
+  final int chromaFloor;
 
   /// Frames wider than this are downscaled before analysis.
   final int analyzeWidth;
@@ -43,6 +50,7 @@ class Base3Scanner {
     this.detectThreshold = 50,
     this.minBlobArea = 2,
     this.sampleRadius = 2,
+    this.chromaFloor = 12,
     this.analyzeWidth = 640,
   });
 
@@ -118,7 +126,7 @@ class Base3Scanner {
       final digits = StringBuffer();
       var ok = true;
       for (final f in frames) {
-        final d = _dominantDigit(f, b.cx.round(), b.cy.round());
+        final d = _dominantDigit(f, b);
         if (d < 0) {
           ok = false;
           break;
@@ -149,25 +157,46 @@ class Base3Scanner {
     return max(r, max(g, b));
   }
 
-  /// Sums R/G/B in a window around (cx,cy) and returns the dominant channel as
-  /// a base-3 digit (0=R,1=G,2=B), or -1 if the region is too dim to classify.
-  int _dominantDigit(img.Image f, int cx, int cy) {
-    var sr = 0, sg = 0, sb = 0;
-    for (var dy = -sampleRadius; dy <= sampleRadius; dy++) {
-      for (var dx = -sampleRadius; dx <= sampleRadius; dx++) {
+  /// Classifies blob [b]'s colour in frame [f] as a base-3 digit (0=R,1=G,2=B),
+  /// or -1 if no sample is colourful enough to decide.
+  ///
+  /// Each sample votes by *chroma* — its channel value minus the per-pixel
+  /// minimum — which discards the white/grey component. That makes the read
+  /// robust to a centre blown out to white (the coloured halo still votes) and
+  /// to the camera's auto white-balance tinting the whole frame. The sampling
+  /// window grows with the blob so it always reaches that halo.
+  int _dominantDigit(img.Image f, _Blob b) {
+    final cx = b.cx.round();
+    final cy = b.cy.round();
+    // Reach roughly to the blob edge (area ~= pi r^2), but at least sampleRadius.
+    final reach = max(sampleRadius, (sqrt(b.area / pi)).round());
+    var vr = 0, vg = 0, vb = 0;
+    for (var dy = -reach; dy <= reach; dy++) {
+      for (var dx = -reach; dx <= reach; dx++) {
         final x = cx + dx;
         final y = cy + dy;
         if (x < 0 || y < 0 || x >= f.width || y >= f.height) continue;
         final p = f.getPixel(x, y);
-        sr += p.r.toInt();
-        sg += p.g.toInt();
-        sb += p.b.toInt();
+        final r = p.r.toInt();
+        final g = p.g.toInt();
+        final b0 = p.b.toInt();
+        final m = min(r, min(g, b0)); // white/grey/ambient component
+        final cr = r - m, cg = g - m, cb = b0 - m; // chroma per channel
+        final topc = max(cr, max(cg, cb));
+        if (topc < chromaFloor) continue; // colourless -> no vote
+        if (topc == cr) {
+          vr += cr;
+        } else if (topc == cg) {
+          vg += cg;
+        } else {
+          vb += cb;
+        }
       }
     }
-    final top = max(sr, max(sg, sb));
-    if (top < detectThreshold) return -1;
-    if (top == sr) return 0;
-    if (top == sg) return 1;
+    final top = max(vr, max(vg, vb));
+    if (top <= 0) return -1; // nothing colourful enough to classify
+    if (top == vr) return 0;
+    if (top == vg) return 1;
     return 2;
   }
 
