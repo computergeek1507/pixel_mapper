@@ -33,13 +33,30 @@ class CameraPackageSource implements CameraSource {
       throw StateError('No cameras available on this device.');
     }
     final camera = cameras[cameraIndex.clamp(0, cameras.length - 1)];
-    final controller = CameraController(
-      camera,
+
+    // Try the preferred resolution, then fall back to lower presets. Many
+    // Windows webcams (and the virtual "AV stream" devices Windows enumerates)
+    // don't support the higher presets and throw on initialize.
+    final presets = <ResolutionPreset>[
       resolution,
-      enableAudio: false,
-    );
-    await controller.initialize();
-    _controller = controller;
+      ResolutionPreset.high,
+      ResolutionPreset.medium,
+      ResolutionPreset.low,
+    ];
+    Object? lastError;
+    for (final preset in presets) {
+      final controller = CameraController(camera, preset, enableAudio: false);
+      try {
+        await controller.initialize();
+        _controller = controller;
+        return;
+      } catch (e) {
+        lastError = e;
+        await controller.dispose().catchError((_) {});
+      }
+    }
+    throw StateError(
+        'Could not open "${camera.name}" at any resolution: $lastError');
   }
 
   @override
