@@ -14,6 +14,10 @@ import '../services/pixel_output.dart';
 import '../services/scan_controller.dart';
 import 'scan_page.dart';
 
+/// What the manual test is currently showing, so changing the test colour
+/// re-applies the same mode instead of dropping to a single pixel.
+enum _ManualDisplay { off, single, all }
+
 /// Phase 1 UI: configure the controller target and manually exercise pixels
 /// (light one, step through, chase, blackout) to verify DDP / sACN output
 /// against real WS2811 hardware before any camera work.
@@ -44,6 +48,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
 
   int _currentPixel = 0;
   double _brightness = 1.0;
+  _ManualDisplay _manual = _ManualDisplay.off;
   Timer? _chaseTimer;
 
   bool get _connected => _output != null;
@@ -206,6 +211,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
       setState(() {
         _output = out;
         _currentPixel = 0;
+        _manual = _ManualDisplay.off; // connect blacks out
         _status = 'Connected — sending ${cfg.protocol.label} to ${cfg.ip}.';
       });
       _saveSettings();
@@ -232,7 +238,10 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     if (out == null) return;
     final clamped = index.clamp(0, out.pixelCount - 1);
     await out.lightSingle(clamped, color: _testColor);
-    setState(() => _currentPixel = clamped);
+    setState(() {
+      _currentPixel = clamped;
+      _manual = _ManualDisplay.single;
+    });
   }
 
   /// Updates the LED drive brightness and re-sends the current frame so the
@@ -255,8 +264,17 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
       showCheckmark: false,
       onSelected: (_) {
         setState(() => _testColor = c);
-        // Re-light the current pixel so the new colour shows immediately.
-        if (_chaseTimer == null) _lightPixel(_currentPixel);
+        // Re-apply the current mode with the new colour (a running chase picks
+        // it up on its next tick).
+        if (_chaseTimer != null) return;
+        switch (_manual) {
+          case _ManualDisplay.all:
+            _allOn();
+          case _ManualDisplay.single:
+            _lightPixel(_currentPixel);
+          case _ManualDisplay.off:
+            break;
+        }
       },
     );
   }
@@ -266,13 +284,14 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     if (out == null) return;
     out.setAll(_testColor);
     await out.render();
+    setState(() => _manual = _ManualDisplay.all);
   }
 
   Future<void> _blackout() async {
     _chaseTimer?.cancel();
     _chaseTimer = null;
     await _output?.blackout();
-    if (mounted) setState(() {});
+    if (mounted) setState(() => _manual = _ManualDisplay.off);
   }
 
   void _toggleChase() {
