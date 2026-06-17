@@ -66,8 +66,11 @@ class Base3Scanner {
   const Base3Scanner({
     this.detectThreshold = 50,
     this.minBlobArea = 3,
-    this.chromaFloor = 12,
-    this.confidenceRatio = 1.25,
+    this.chromaFloor = 6,
+    // 1.0 = trust the dominant chroma channel (only erase a truly colourless
+    // frame). Real R/G/B LEDs often read with a strong secondary channel
+    // (e.g. orange-ish red), so a higher ratio erased correct reads.
+    this.confidenceRatio = 1.0,
     this.analyzeWidth = 1920,
   });
 
@@ -256,7 +259,7 @@ class Base3Scanner {
   int _matchCodeword(List<int> read, List<List<int>> codes) {
     const erasureCost = 1;
     const substitutionCost = 2;
-    const maxAcceptCost = 2; // up to 2 erasures, or 1 substitution
+    const maxAcceptCost = 3; // e.g. 1 substitution + 1 erasure, or 3 erasures
     const minMargin = 2; // runner-up must be clearly worse
 
     var bestCost = 1 << 30, secondCost = 1 << 30, bestPixel = -1;
