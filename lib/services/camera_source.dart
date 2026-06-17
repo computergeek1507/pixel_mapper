@@ -29,5 +29,10 @@ abstract class CameraSource {
   /// Live preview widget. Returns a black box if not yet initialized.
   Widget buildPreview();
 
+  /// Resumes the live preview after a still-capture burst. Some platforms
+  /// (notably Android) leave the preview paused after `takePicture`, which makes
+  /// framing impossible once a scan has run. No-op where not applicable.
+  Future<void> resumePreview() async {}
+
   Future<void> dispose();
 }

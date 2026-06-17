@@ -64,6 +64,13 @@ class CameraPackageSource implements CameraSource {
   }
 
   @override
+  Future<void> resumePreview() async {
+    try {
+      await _controller?.resumePreview();
+    } catch (_) {}
+  }
+
+  @override
   Widget buildPreview() {
     final c = _controller;
     if (c == null || !c.value.isInitialized) {

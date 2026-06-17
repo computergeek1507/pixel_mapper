@@ -25,6 +25,39 @@ class _Candidate {
   const _Candidate(this.normX, this.normY, this.area);
 }
 
+/// A per-frame shift field on a [g]x[g] grid (full-resolution px), used to undo
+/// camera drift. Block lookup for the dense pass; bilinear for per-blob reads.
+class _ShiftField {
+  final int g;
+  final int w;
+  final int h;
+  final List<int> dxs; // g*g
+  final List<int> dys; // g*g
+  const _ShiftField(this.g, this.w, this.h, this.dxs, this.dys);
+
+  int _bx(int x) => ((x * g) ~/ w).clamp(0, g - 1);
+  int _by(int y) => ((y * g) ~/ h).clamp(0, g - 1);
+
+  int blockDx(int x, int y) => dxs[_by(y) * g + _bx(x)];
+  int blockDy(int x, int y) => dys[_by(y) * g + _bx(x)];
+
+  /// Bilinear-interpolated [dx, dy] at full-res (x, y).
+  List<int> at(int x, int y) {
+    final gxf = ((x + 0.5) / w * g - 0.5).clamp(0.0, (g - 1).toDouble());
+    final gyf = ((y + 0.5) / h * g - 0.5).clamp(0.0, (g - 1).toDouble());
+    final x0 = gxf.floor(), y0 = gyf.floor();
+    final x1 = (x0 + 1).clamp(0, g - 1), y1 = (y0 + 1).clamp(0, g - 1);
+    final fx = gxf - x0, fy = gyf - y0;
+    double bil(List<int> v) {
+      final a = v[y0 * g + x0] + (v[y0 * g + x1] - v[y0 * g + x0]) * fx;
+      final b = v[y1 * g + x0] + (v[y1 * g + x1] - v[y1 * g + x0]) * fx;
+      return a + (b - a) * fy;
+    }
+
+    return [bil(dxs).round(), bil(dys).round()];
+  }
+}
+
 /// Result of a base-3 decode: the per-pixel points plus how many distinct bright
 /// regions were found (a diagnostic: regions far below the pixel count means the
 /// camera can't separate the LEDs, not that decoding failed).
@@ -67,6 +100,11 @@ class Base3Scanner {
   /// drift estimation). Smaller is faster; the shift is scaled back to full res.
   final int alignWidth;
 
+  /// Frame registration uses a [registerGrid] x [registerGrid] grid of regional
+  /// shifts (interpolated into a smooth field), so handheld rotation/tilt — not
+  /// just translation — is compensated.
+  final int registerGrid;
+
   const Base3Scanner({
     this.detectThreshold = 50,
     this.minBlobArea = 3,
@@ -77,6 +115,7 @@ class Base3Scanner {
     this.confidenceRatio = 1.0,
     this.analyzeWidth = 1920,
     this.alignWidth = 480,
+    this.registerGrid = 4,
   });
 
   /// Decodes encoded image bytes (one per base-3 frame). Suitable for running
@@ -124,7 +163,7 @@ class Base3Scanner {
     //    (handheld), so estimate each frame's pixel shift relative to frame 0.
     //    Without this, a fixed read position lands on a neighbouring LED in
     //    later frames and the colour sequence is garbage.
-    final shifts = _estimateShifts(frames, w, h);
+    final fields = _estimateShiftFields(frames, w, h);
 
     // 1. Aligned max-projection of the max-channel signal across all frames
     //    (every pixel is lit in every frame, so this surfaces them all), minus
@@ -132,13 +171,12 @@ class Base3Scanner {
     final signal = Uint8List(w * h);
     for (var fi = 0; fi < frames.length; fi++) {
       final f = frames[fi];
-      final sx = shifts[fi][0], sy = shifts[fi][1];
+      final field = fields[fi];
       for (var y = 0; y < h; y++) {
-        final yi = y + sy;
-        if (yi < 0 || yi >= h) continue;
         for (var x = 0; x < w; x++) {
-          final xi = x + sx;
-          if (xi < 0 || xi >= w) continue;
+          final xi = x + field.blockDx(x, y);
+          final yi = y + field.blockDy(x, y);
+          if (xi < 0 || yi < 0 || xi >= w || yi >= h) continue;
           final m = _maxChannel(f.getPixel(xi, yi));
           final idx = y * w + x;
           if (m > signal[idx]) signal[idx] = m;
@@ -175,7 +213,10 @@ class Base3Scanner {
       for (final b in blobs)
         [
           for (var fi = 0; fi < frames.length; fi++)
-            _dominantDigit(frames[fi], b, w, shifts[fi][0], shifts[fi][1])
+            () {
+              final s = fields[fi].at(b.cx.round(), b.cy.round());
+              return _dominantDigit(frames[fi], b, w, s[0], s[1]);
+            }()
         ]
     ];
 
@@ -234,13 +275,19 @@ class Base3Scanner {
     return max(r, max(g, b));
   }
 
-  /// Estimates each frame's pixel shift relative to frame 0 (camera drift during
-  /// the handheld capture). Returns full-resolution [dx, dy] per frame; frame 0
-  /// is [0, 0]. The bright LED pattern is identical across frames apart from the
-  /// shift, so aligning downscaled brightness maps recovers it robustly.
-  List<List<int>> _estimateShifts(List<img.Image> frames, int w, int h) {
-    final shifts = List.generate(frames.length, (_) => <int>[0, 0]);
-    if (frames.length <= 1) return shifts;
+  /// Estimates a per-frame shift field (camera drift during the handheld
+  /// capture). Frame 0 is the reference (zero field). For every other frame a
+  /// global shift is found first, then a regional shift per grid block, falling
+  /// back to the global one where a block has too little signal or aligns
+  /// poorly. Interpolating the grid yields a smooth field that follows
+  /// translation and rotation/tilt.
+  List<_ShiftField> _estimateShiftFields(List<img.Image> frames, int w, int h) {
+    final g = registerGrid;
+    final n = frames.length;
+    final fields = <_ShiftField>[
+      _ShiftField(g, w, h, List.filled(g * g, 0), List.filled(g * g, 0))
+    ];
+    if (n <= 1) return fields;
 
     final dw = w > alignWidth ? alignWidth : w;
     final factor = w / dw;
@@ -261,19 +308,38 @@ class Base3Scanner {
     }
 
     final ref = maps[0];
-    for (var i = 1; i < frames.length; i++) {
-      final s = _stepSearch(maps[i], ref, dw, dh);
-      shifts[i] = [(s[0] * factor).round(), (s[1] * factor).round()];
+    for (var i = 1; i < n; i++) {
+      final gl = _stepSearchWin(maps[i], ref, dw, dh, 0, 0, dw, dh, 0, 0);
+      final globalRes =
+          _meanAbsDiffWin(maps[i], ref, dw, dh, 0, 0, dw, dh, gl[0], gl[1]);
+      final dxs = List.filled(g * g, 0), dys = List.filled(g * g, 0);
+      for (var by = 0; by < g; by++) {
+        for (var bx = 0; bx < g; bx++) {
+          final x0 = bx * dw ~/ g, x1 = (bx + 1) * dw ~/ g;
+          final y0 = by * dh ~/ g, y1 = (by + 1) * dh ~/ g;
+          var s = gl;
+          if (_blockEnergy(ref, dw, x0, y0, x1, y1) >= detectThreshold) {
+            final cand = _stepSearchWin(
+                maps[i], ref, dw, dh, x0, y0, x1, y1, gl[0], gl[1]);
+            final res =
+                _meanAbsDiffWin(maps[i], ref, dw, dh, x0, y0, x1, y1, cand[0], cand[1]);
+            if (res <= globalRes * 1.5 + 4) s = cand;
+          }
+          dxs[by * g + bx] = (s[0] * factor).round();
+          dys[by * g + bx] = (s[1] * factor).round();
+        }
+      }
+      fields.add(_ShiftField(g, w, h, dxs, dys));
     }
-    return shifts;
+    return fields;
   }
 
-  /// Logarithmic (diamond) search for the [dx, dy] minimizing mean abs
-  /// difference between [m] shifted and [ref]. Cheap vs full search and reliable
-  /// because the LED pattern has a single strong alignment optimum.
-  List<int> _stepSearch(Uint8List m, Uint8List ref, int dw, int dh) {
-    var bx = 0, by = 0;
-    var best = _meanAbsDiff(m, ref, dw, dh, 0, 0);
+  /// Logarithmic (diamond) search over a window for the [dx, dy] minimizing
+  /// mean abs difference between [m] shifted and [ref]. Starts from a seed.
+  List<int> _stepSearchWin(Uint8List m, Uint8List ref, int dw, int dh, int x0,
+      int y0, int x1, int y1, int seedX, int seedY) {
+    var bx = seedX, by = seedY;
+    var best = _meanAbsDiffWin(m, ref, dw, dh, x0, y0, x1, y1, bx, by);
     const dirs = [
       [1, 0], [-1, 0], [0, 1], [0, -1],
       [1, 1], [1, -1], [-1, 1], [-1, -1], //
@@ -284,7 +350,7 @@ class Base3Scanner {
         improved = false;
         for (final d in dirs) {
           final nx = bx + d[0] * step, ny = by + d[1] * step;
-          final c = _meanAbsDiff(m, ref, dw, dh, nx, ny);
+          final c = _meanAbsDiffWin(m, ref, dw, dh, x0, y0, x1, y1, nx, ny);
           if (c < best) {
             best = c;
             bx = nx;
@@ -297,24 +363,36 @@ class Base3Scanner {
     return [bx, by];
   }
 
-  /// Mean absolute difference of [m] shifted by ([dx],[dy]) against [ref] over
-  /// their overlap (normalized, so larger shifts aren't unfairly favoured).
-  double _meanAbsDiff(
-      Uint8List m, Uint8List ref, int dw, int dh, int dx, int dy) {
+  /// Mean absolute difference over window [x0,x1)x[y0,y1) of [m] shifted by
+  /// ([dx],[dy]) against [ref], normalized over the overlap.
+  double _meanAbsDiffWin(Uint8List m, Uint8List ref, int dw, int dh, int x0,
+      int y0, int x1, int y1, int dx, int dy) {
     var sum = 0, cnt = 0;
-    for (var y = 0; y < dh; y++) {
+    for (var y = y0; y < y1; y++) {
       final yi = y + dy;
       if (yi < 0 || yi >= dh) continue;
-      for (var x = 0; x < dw; x++) {
+      for (var x = x0; x < x1; x++) {
         final xi = x + dx;
         if (xi < 0 || xi >= dw) continue;
         sum += (m[yi * dw + xi] - ref[y * dw + x]).abs();
         cnt++;
       }
     }
-    // Require meaningful overlap; otherwise treat as a poor match.
-    if (cnt < dw * dh ~/ 4) return 1e9;
+    final area = (x1 - x0) * (y1 - y0);
+    if (cnt < area ~/ 4) return 1e9; // too little overlap to trust
     return sum / cnt;
+  }
+
+  /// Mean brightness of [ref] over a block — used to skip near-dark blocks.
+  double _blockEnergy(Uint8List ref, int dw, int x0, int y0, int x1, int y1) {
+    var sum = 0, cnt = 0;
+    for (var y = y0; y < y1; y++) {
+      for (var x = x0; x < x1; x++) {
+        sum += ref[y * dw + x];
+        cnt++;
+      }
+    }
+    return cnt > 0 ? sum / cnt : 0;
   }
 
   /// Classifies blob [b]'s colour in frame [f] as a base-3 digit (0=R,1=G,2=B),

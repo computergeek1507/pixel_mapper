@@ -50,6 +50,11 @@ class RtspCameraSource implements CameraSource {
   }
 
   @override
+  Future<void> resumePreview() async {
+    // RTSP preview is a continuous live stream; nothing to resume.
+  }
+
+  @override
   Widget buildPreview() {
     final controller = _videoController;
     if (controller == null) return const ColoredBox(color: Colors.black);

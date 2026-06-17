@@ -146,6 +146,9 @@ class ScanController extends ChangeNotifier {
       error = e.toString();
       state = ScanState.error;
     } finally {
+      // The still-capture burst can leave the live preview paused; resume it so
+      // framing (and the preview lights) work again after a scan.
+      await camera.resumePreview().catchError((_) {});
       notifyListeners();
     }
   }
