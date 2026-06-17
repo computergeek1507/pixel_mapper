@@ -92,6 +92,12 @@ class RtspCameraSource implements CameraSource {
   Future<Uint8List> captureFrame() async {
     final player = _player;
     if (player == null) throw StateError('Camera source not initialized.');
+    // The live feed lags the real scene; after the caller changes the LEDs and
+    // settles, wait one feed interval and discard a frame so the screenshot is
+    // the *current* scene, not a stale buffered one. Without this, sequential
+    // scanning records each pixel from the wrong (lagging) frame.
+    await player.screenshot(format: 'image/png');
+    await Future<void>.delayed(const Duration(milliseconds: 220));
     final bytes = await player.screenshot(format: 'image/png');
     if (bytes == null) {
       await _log('screenshot returned null for "$url"');
