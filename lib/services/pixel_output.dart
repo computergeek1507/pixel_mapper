@@ -41,6 +41,14 @@ abstract class PixelOutput {
 
   int _scale(int channel) => (channel * _brightness).round().clamp(0, 255);
 
+  /// Wire colour order. Defaults to the config's, but can be changed live (e.g.
+  /// from the manual test) without reopening the socket.
+  ColorOrder? _colorOrder;
+
+  ColorOrder get colorOrder => _colorOrder ?? cfg.colorOrder;
+
+  set colorOrder(ColorOrder value) => _colorOrder = value;
+
   /// Re-sends the current frame on a fixed cadence while the output is open.
   /// Pixel controllers in a receive mode (WLED realtime, Falcon "receive
   /// timeout", etc.) revert to their normal output if data stops arriving, so
@@ -61,6 +69,7 @@ abstract class PixelOutput {
 
   Future<void> open(TargetConfig config) async {
     cfg = config;
+    _colorOrder = null; // use the new config's order until overridden
     rgb = Uint8List(config.pixelCount * 3);
     socket = await UdpSocket.create();
   }
@@ -74,15 +83,16 @@ abstract class PixelOutput {
 
   void setPixel(int index, PixelColor c) {
     if (index < 0 || index >= pixelCount) return;
-    cfg.colorOrder.write(rgb, index * 3, _scale(c.r), _scale(c.g), _scale(c.b));
+    colorOrder.write(rgb, index * 3, _scale(c.r), _scale(c.g), _scale(c.b));
   }
 
   void setAll(PixelColor c) {
     final r = _scale(c.r);
     final g = _scale(c.g);
     final b = _scale(c.b);
+    final order = colorOrder;
     for (var i = 0; i < rgb.length; i += 3) {
-      cfg.colorOrder.write(rgb, i, r, g, b);
+      order.write(rgb, i, r, g, b);
     }
   }
 

@@ -264,19 +264,24 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
       showCheckmark: false,
       onSelected: (_) {
         setState(() => _testColor = c);
-        // Re-apply the current mode with the new colour (a running chase picks
-        // it up on its next tick).
-        if (_chaseTimer != null) return;
-        switch (_manual) {
-          case _ManualDisplay.all:
-            _allOn();
-          case _ManualDisplay.single:
-            _lightPixel(_currentPixel);
-          case _ManualDisplay.off:
-            break;
-        }
+        _reapplyManual();
       },
     );
+  }
+
+  /// Re-applies whatever the manual test is currently showing (after the colour
+  /// or colour-order changes). A running chase picks the change up on its next
+  /// tick, so it's left alone.
+  void _reapplyManual() {
+    if (_chaseTimer != null) return;
+    switch (_manual) {
+      case _ManualDisplay.all:
+        _allOn();
+      case _ManualDisplay.single:
+        _lightPixel(_currentPixel);
+      case _ManualDisplay.off:
+        break;
+    }
   }
 
   Future<void> _allOn() async {
@@ -353,8 +358,10 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
             onChanged: (o) {
               if (o == null) return;
               setState(() => _colorOrder = o);
-              // Apply live so the manual test reflects it immediately.
-              if (_connected) _connect();
+              // Apply live without reopening the socket, so the manual test
+              // keeps its current mode.
+              _output?.colorOrder = o;
+              _reapplyManual();
             },
           ),
           const SizedBox(height: 12),
