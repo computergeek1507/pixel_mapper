@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:camera/camera.dart' show CameraDescription, CameraLensDirection;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -35,6 +36,8 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
   PixelColor _testColor = PixelColor.white;
   bool _useRtsp = false;
   ScanMode _scanMode = ScanMode.fastBase3;
+  List<CameraDescription> _cameras = const [];
+  int _cameraIndex = 0;
   PixelOutput? _output;
   bool _connecting = false;
   String? _status;
@@ -53,6 +56,34 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
   void initState() {
     super.initState();
     _loadSettings();
+    _loadCameras();
+  }
+
+  /// Enumerates the device cameras so the user can pick one when there's more
+  /// than the default (e.g. front/back, or multiple webcams on Windows).
+  Future<void> _loadCameras() async {
+    try {
+      final cams = await CameraPackageSource.listCameras();
+      if (!mounted) return;
+      setState(() {
+        _cameras = cams;
+        if (_cameraIndex >= cams.length) _cameraIndex = 0;
+      });
+    } catch (_) {
+      // No camera plugin / no cameras — leave the list empty (uses default).
+    }
+  }
+
+  String _cameraLabel(int i) {
+    if (i < 0 || i >= _cameras.length) return 'Camera $i';
+    final c = _cameras[i];
+    final dir = switch (c.lensDirection) {
+      CameraLensDirection.front => 'front',
+      CameraLensDirection.back => 'back',
+      CameraLensDirection.external => 'external',
+    };
+    final name = c.name.isNotEmpty ? c.name : 'Camera $i';
+    return '$name ($dir)';
   }
 
   /// Restores the last-used settings so the user doesn't re-enter them.
@@ -73,6 +104,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
           (e) => e.name == p.getString('scanMode'), orElse: () => _scanMode);
       _useRtsp = p.getBool('useRtsp') ?? _useRtsp;
       _brightness = p.getDouble('brightness') ?? _brightness;
+      _cameraIndex = p.getInt('cameraIndex') ?? _cameraIndex;
     });
   }
 
@@ -89,6 +121,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     await p.setString('scanMode', _scanMode.name);
     await p.setBool('useRtsp', _useRtsp);
     await p.setDouble('brightness', _brightness);
+    await p.setInt('cameraIndex', _cameraIndex);
   }
 
   @override
@@ -115,7 +148,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     await _disconnect();
     final CameraSource camera = (_useRtsp && _rtspSupported)
         ? RtspCameraSource(_rtspCtrl.text.trim())
-        : CameraPackageSource();
+        : CameraPackageSource(cameraIndex: _cameraIndex);
     if (!mounted) return;
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => ScanPage(config: cfg, camera: camera, mode: _scanMode),
@@ -462,6 +495,21 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
                 : 'Lights one pixel at a time — slower but simplest.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
+          if (!_useRtsp && _cameras.length >= 2) ...[
+            const SizedBox(height: 12),
+            DropdownButtonFormField<int>(
+              initialValue: _cameraIndex.clamp(0, _cameras.length - 1),
+              decoration: const InputDecoration(
+                labelText: 'Camera',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                for (var i = 0; i < _cameras.length; i++)
+                  DropdownMenuItem(value: i, child: Text(_cameraLabel(i))),
+              ],
+              onChanged: (i) => setState(() => _cameraIndex = i ?? _cameraIndex),
+            ),
+          ],
           const SizedBox(height: 12),
           if (_rtspSupported) ...[
             SwitchListTile(
