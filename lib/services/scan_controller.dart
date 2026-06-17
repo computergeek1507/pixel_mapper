@@ -85,8 +85,14 @@ class ScanController extends ChangeNotifier {
     BrightSpotDetector? detector,
     this.settleDelayMs = 60,
     this.mode = ScanMode.sequential,
+    this.warmupMs = 1500,
   })  : output = output ?? createPixelOutput(config.protocol),
         detector = detector ?? const ImageBrightSpotDetector();
+
+  /// Time to light the whole prop before capturing, so a camera we can't lock
+  /// (e.g. the C920 via media_kit) settles its auto focus/exposure on the lit
+  /// scene first. The base-3 frames keep every pixel lit, so it stays stable.
+  int warmupMs;
 
   final List<DetectedPoint> points = [];
   ScanState state = ScanState.idle;
@@ -153,8 +159,18 @@ class ScanController extends ChangeNotifier {
     }
   }
 
+  /// Lights the whole prop and holds, letting the live preview drive the
+  /// camera's auto focus/exposure to settle on the lit scene before capture.
+  Future<void> _warmUp() async {
+    if (warmupMs <= 0) return;
+    output.setAll(PixelColor.white);
+    await output.render();
+    await Future<void>.delayed(Duration(milliseconds: warmupMs));
+  }
+
   /// Sequential scan: light each pixel in turn and detect the single bright spot.
   Future<void> _runSequential() async {
+    await _warmUp();
     await output.blackout();
     await _settle();
     referenceFrame = await camera.captureFrame();
@@ -179,6 +195,7 @@ class ScanController extends ChangeNotifier {
     final codes =
         List.generate(numPixels, (j) => Base3Codec.encode(j + 1, bits));
 
+    await _warmUp();
     await output.blackout();
     await _settle();
     referenceFrame = await camera.captureFrame();

@@ -106,6 +106,7 @@ void main() {
       camera: _FakeCamera(scene),
       output: _FakeOutput(scene),
       settleDelayMs: 0,
+      warmupMs: 0,
     );
 
     await ctrl.start();
@@ -131,6 +132,7 @@ void main() {
       camera: _FakeCamera(scene),
       output: _FakeOutput(scene),
       settleDelayMs: 0,
+      warmupMs: 0,
     );
 
     await ctrl.start();

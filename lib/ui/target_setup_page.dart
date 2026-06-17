@@ -147,9 +147,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     // (two senders would fight over the same controller).
     final wasConnected = _connected;
     await _disconnect();
-    final CameraSource camera = (_useRtsp && _rtspSupported)
-        ? RtspCameraSource(_rtspCtrl.text.trim())
-        : CameraPackageSource(cameraIndex: _cameraIndex);
+    final CameraSource camera = _buildCamera();
     if (!mounted) return;
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => ScanPage(config: cfg, camera: camera, mode: _scanMode),
@@ -157,6 +155,22 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     // Returning from the scan: restore the manual-test connection so the user
     // isn't silently disconnected after a scan.
     if (mounted && wasConnected) await _connect();
+  }
+
+  /// Picks the camera source. On Windows, local webcams go through media_kit
+  /// (DirectShow), which decodes MJPG-only cameras the camera_windows preview
+  /// can't open; mobile uses the first-party camera plugin.
+  CameraSource _buildCamera() {
+    if (_useRtsp && _rtspSupported) {
+      return RtspCameraSource(_rtspCtrl.text.trim());
+    }
+    if (_rtspSupported && _cameras.isNotEmpty) {
+      final raw = _cameras[_cameraIndex.clamp(0, _cameras.length - 1)].name;
+      final lt = raw.indexOf(' <');
+      final name = lt > 0 ? raw.substring(0, lt) : raw;
+      return RtspCameraSource.dshow(name);
+    }
+    return CameraPackageSource(cameraIndex: _cameraIndex);
   }
 
   TargetConfig? _buildConfig() {
