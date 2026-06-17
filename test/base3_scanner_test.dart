@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:pixel_mapper/models/pixel_color.dart';
 import 'package:pixel_mapper/services/base3_codec.dart';
 import 'package:pixel_mapper/services/base3_scanner.dart';
 
@@ -179,6 +180,42 @@ void main() {
         reason: 'blur should collapse noisy cores: ${result.blobsFound}');
     for (final node in positions.keys) {
       expect(result.points[node].detected, isTrue, reason: 'node $node');
+    }
+  });
+
+  test('auto-detects colour order: decodes a GRB-permuted capture', () {
+    // Simulate LEDs whose byte order is GRB: the colour the app intends as red
+    // shows as green and vice versa (blue unchanged). The decoder must try
+    // permutations and still recover every pixel.
+    const numPixels = 20;
+    final positions = {
+      0: const Offset(40, 40),
+      5: const Offset(160, 60),
+      12: const Offset(250, 180),
+      19: const Offset(80, 200),
+    };
+    img.ColorRgb8 swapRG(PixelColor c) => img.ColorRgb8(c.g, c.r, c.b);
+    final bits = Base3Codec.bitsFor(numPixels);
+    final codes = {
+      for (final e in positions.entries)
+        e.key: Base3Codec.encode(e.key + 1, bits)
+    };
+    final frames = <img.Image>[];
+    for (var i = 0; i < bits; i++) {
+      final im = img.Image(width: 320, height: 240);
+      img.fill(im, color: img.ColorRgb8(4, 4, 4));
+      positions.forEach((node, pos) {
+        final intended = Base3Codec.colorForDigit(codes[node]!.codeUnitAt(i) - 0x30);
+        final shown = swapRG(intended); // GRB hardware
+        img.fillCircle(im,
+            x: pos.dx.round(), y: pos.dy.round(), radius: 4, color: shown);
+      });
+      frames.add(im);
+    }
+
+    final points = const Base3Scanner().decodeImages(frames, null, numPixels).points;
+    for (final node in positions.keys) {
+      expect(points[node].detected, isTrue, reason: 'node $node');
     }
   });
 

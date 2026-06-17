@@ -202,6 +202,9 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     return ChoiceChip(
       label: Text(label),
       selected: _testColor == c,
+      // No checkmark: it changes the chip width and reflows the row, making the
+      // controls below jump when you switch colours.
+      showCheckmark: false,
       onSelected: (_) {
         setState(() => _testColor = c);
         // Re-light the current pixel so the new colour shows immediately.

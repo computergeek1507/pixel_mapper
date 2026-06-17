@@ -149,13 +149,46 @@ class Base3Scanner {
       return List<int>.generate(s.length, (i) => s.codeUnitAt(i) - 0x30);
     });
 
-    // 3. Read each blob's colour sequence and match it to a pixel.
+    // 3. Read every blob's colour sequence (digits, -1 = erasure).
+    final reads = [
+      for (final b in blobs) [for (final f in frames) _dominantDigit(f, b, w)]
+    ];
+
+    // Auto-detect colour order: the camera sees R/G/B permuted if the LEDs use a
+    // non-RGB byte order (WS2811 is often GRB). Try all six permutations of the
+    // observed digits and keep whichever decodes the most blobs — no need for
+    // the user to get the colour-order setting right for the scan to work.
+    const perms = [
+      [0, 1, 2],
+      [0, 2, 1],
+      [1, 0, 2],
+      [1, 2, 0],
+      [2, 0, 1],
+      [2, 1, 0],
+    ];
+    var bestPixels = const <int>[];
+    var bestCount = -1;
+    for (final perm in perms) {
+      final pixels = List<int>.filled(reads.length, -1);
+      var count = 0;
+      for (var bi = 0; bi < reads.length; bi++) {
+        final permuted = [for (final d in reads[bi]) d < 0 ? -1 : perm[d]];
+        final px = _matchCodeword(permuted, codes);
+        pixels[bi] = px;
+        if (px >= 1 && px <= numPixels) count++;
+      }
+      if (count > bestCount) {
+        bestCount = count;
+        bestPixels = pixels;
+      }
+    }
+
+    // Keep the largest blob per decoded pixel.
     final best = <int, _Candidate>{};
-    for (final b in blobs) {
-      final read = [for (final f in frames) _dominantDigit(f, b, w)];
-      final pixel = _matchCodeword(read, codes);
+    for (var bi = 0; bi < blobs.length; bi++) {
+      final pixel = bestPixels[bi];
       if (pixel < 1 || pixel > numPixels) continue;
-      // On duplicate decode, keep the larger blob.
+      final b = blobs[bi];
       final cand = _Candidate(b.cx / w, b.cy / h, b.area);
       final prev = best[pixel];
       if (prev == null || cand.area > prev.area) best[pixel] = cand;
