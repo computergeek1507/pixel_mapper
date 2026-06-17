@@ -7,6 +7,33 @@ enum Protocol {
   final String label;
 }
 
+/// Order the three colour bytes are sent in on the wire. WS2811/WS2812 strings
+/// vary (GRB is very common), and if it's wrong the app's red shows as green —
+/// which silently breaks the base-3 colour scan. [c0]/[c1]/[c2] are the logical
+/// channels (0=R, 1=G, 2=B) that go in the first/second/third wire byte.
+enum ColorOrder {
+  rgb('RGB', 0, 1, 2),
+  rbg('RBG', 0, 2, 1),
+  grb('GRB', 1, 0, 2),
+  gbr('GBR', 1, 2, 0),
+  brg('BRG', 2, 0, 1),
+  bgr('BGR', 2, 1, 0);
+
+  const ColorOrder(this.label, this.c0, this.c1, this.c2);
+  final String label;
+  final int c0;
+  final int c1;
+  final int c2;
+
+  /// Writes logical colour [r],[g],[b] into [buf] at [o] in this wire order.
+  void write(List<int> buf, int o, int r, int g, int b) {
+    final ch = [r, g, b];
+    buf[o] = ch[c0];
+    buf[o + 1] = ch[c1];
+    buf[o + 2] = ch[c2];
+  }
+}
+
 /// Describes the controller we are driving: its address, how many RGB pixels
 /// it has, and protocol-specific addressing.
 ///
@@ -27,6 +54,9 @@ class TargetConfig {
   /// universe holds whole pixels only (170 RGB pixels = 510 channels).
   final bool crossUniverseWrap;
 
+  /// Byte order the LEDs expect on the wire (WS2811 is often GRB).
+  final ColorOrder colorOrder;
+
   const TargetConfig({
     required this.ip,
     required this.pixelCount,
@@ -34,6 +64,7 @@ class TargetConfig {
     this.startUniverse = 1,
     this.startChannel = 1,
     this.crossUniverseWrap = false,
+    this.colorOrder = ColorOrder.rgb,
   });
 
   /// Channels per pixel — RGB only in this app.
@@ -46,6 +77,7 @@ class TargetConfig {
     int? startUniverse,
     int? startChannel,
     bool? crossUniverseWrap,
+    ColorOrder? colorOrder,
   }) {
     return TargetConfig(
       ip: ip ?? this.ip,
@@ -54,6 +86,7 @@ class TargetConfig {
       startUniverse: startUniverse ?? this.startUniverse,
       startChannel: startChannel ?? this.startChannel,
       crossUniverseWrap: crossUniverseWrap ?? this.crossUniverseWrap,
+      colorOrder: colorOrder ?? this.colorOrder,
     );
   }
 
@@ -64,6 +97,7 @@ class TargetConfig {
         'startUniverse': startUniverse,
         'startChannel': startChannel,
         'crossUniverseWrap': crossUniverseWrap,
+        'colorOrder': colorOrder.name,
       };
 
   factory TargetConfig.fromJson(Map<String, dynamic> json) {
@@ -77,6 +111,10 @@ class TargetConfig {
       startUniverse: json['startUniverse'] as int? ?? 1,
       startChannel: json['startChannel'] as int? ?? 1,
       crossUniverseWrap: json['crossUniverseWrap'] as bool? ?? false,
+      colorOrder: ColorOrder.values.firstWhere(
+        (o) => o.name == json['colorOrder'],
+        orElse: () => ColorOrder.rgb,
+      ),
     );
   }
 }

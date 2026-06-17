@@ -74,10 +74,7 @@ abstract class PixelOutput {
 
   void setPixel(int index, PixelColor c) {
     if (index < 0 || index >= pixelCount) return;
-    final o = index * 3;
-    rgb[o] = _scale(c.r);
-    rgb[o + 1] = _scale(c.g);
-    rgb[o + 2] = _scale(c.b);
+    cfg.colorOrder.write(rgb, index * 3, _scale(c.r), _scale(c.g), _scale(c.b));
   }
 
   void setAll(PixelColor c) {
@@ -85,9 +82,7 @@ abstract class PixelOutput {
     final g = _scale(c.g);
     final b = _scale(c.b);
     for (var i = 0; i < rgb.length; i += 3) {
-      rgb[i] = r;
-      rgb[i + 1] = g;
-      rgb[i + 2] = b;
+      cfg.colorOrder.write(rgb, i, r, g, b);
     }
   }
 

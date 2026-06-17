@@ -2,12 +2,15 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pixel_mapper/models/pixel_color.dart';
+import 'package:pixel_mapper/models/target_config.dart';
 import 'package:pixel_mapper/services/pixel_output.dart';
 
 /// Minimal [PixelOutput] that just holds a buffer (no socket), so the
-/// brightness scaling applied by setPixel/setAll can be inspected directly.
+/// brightness scaling and colour-order applied by setPixel/setAll can be
+/// inspected directly.
 class _BufferOutput extends PixelOutput {
-  _BufferOutput(int pixels) {
+  _BufferOutput(int pixels, {ColorOrder colorOrder = ColorOrder.rgb}) {
+    cfg = TargetConfig(ip: '', pixelCount: pixels, colorOrder: colorOrder);
     rgb = Uint8List(pixels * 3);
   }
 
@@ -42,6 +45,28 @@ void main() {
       expect(out.brightness, 1.0);
       out.brightness = -2.0;
       expect(out.brightness, 0.0);
+    });
+  });
+
+  group('PixelOutput.colorOrder', () {
+    test('RGB writes channels in order', () {
+      final out = _BufferOutput(1, colorOrder: ColorOrder.rgb);
+      out.setPixel(0, const PixelColor(10, 20, 30));
+      expect(out.buffer.sublist(0, 3), [10, 20, 30]);
+    });
+
+    test('GRB swaps red and green on the wire', () {
+      final out = _BufferOutput(1, colorOrder: ColorOrder.grb);
+      out.setPixel(0, const PixelColor(10, 20, 30));
+      // Wire = G, R, B.
+      expect(out.buffer.sublist(0, 3), [20, 10, 30]);
+    });
+
+    test('BGR reverses the channels (setAll too)', () {
+      final out = _BufferOutput(2, colorOrder: ColorOrder.bgr);
+      out.setAll(const PixelColor(10, 20, 30));
+      expect(out.buffer.sublist(0, 3), [30, 20, 10]);
+      expect(out.buffer.sublist(3, 6), [30, 20, 10]);
     });
   });
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/pixel_color.dart';
 import '../models/target_config.dart';
@@ -30,6 +31,8 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
   final _rtspCtrl = TextEditingController(text: 'rtsp://');
 
   Protocol _protocol = Protocol.ddp;
+  ColorOrder _colorOrder = ColorOrder.rgb;
+  PixelColor _testColor = PixelColor.white;
   bool _useRtsp = false;
   ScanMode _scanMode = ScanMode.fastBase3;
   PixelOutput? _output;
@@ -47,7 +50,50 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
       !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
   @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  /// Restores the last-used settings so the user doesn't re-enter them.
+  Future<void> _loadSettings() async {
+    final p = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _ipCtrl.text = p.getString('ip') ?? _ipCtrl.text;
+      _countCtrl.text = p.getString('count') ?? _countCtrl.text;
+      _universeCtrl.text = p.getString('universe') ?? _universeCtrl.text;
+      _startChannelCtrl.text = p.getString('startChannel') ?? _startChannelCtrl.text;
+      _rtspCtrl.text = p.getString('rtsp') ?? _rtspCtrl.text;
+      _protocol = Protocol.values.firstWhere(
+          (e) => e.name == p.getString('protocol'), orElse: () => _protocol);
+      _colorOrder = ColorOrder.values.firstWhere(
+          (e) => e.name == p.getString('colorOrder'), orElse: () => _colorOrder);
+      _scanMode = ScanMode.values.firstWhere(
+          (e) => e.name == p.getString('scanMode'), orElse: () => _scanMode);
+      _useRtsp = p.getBool('useRtsp') ?? _useRtsp;
+      _brightness = p.getDouble('brightness') ?? _brightness;
+    });
+  }
+
+  /// Persists the current settings so they survive an app restart.
+  Future<void> _saveSettings() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setString('ip', _ipCtrl.text.trim());
+    await p.setString('count', _countCtrl.text.trim());
+    await p.setString('universe', _universeCtrl.text.trim());
+    await p.setString('startChannel', _startChannelCtrl.text.trim());
+    await p.setString('rtsp', _rtspCtrl.text.trim());
+    await p.setString('protocol', _protocol.name);
+    await p.setString('colorOrder', _colorOrder.name);
+    await p.setString('scanMode', _scanMode.name);
+    await p.setBool('useRtsp', _useRtsp);
+    await p.setDouble('brightness', _brightness);
+  }
+
+  @override
   void dispose() {
+    _saveSettings();
     _chaseTimer?.cancel();
     _output?.blackout();
     _output?.close();
@@ -62,15 +108,21 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
   Future<void> _startScan() async {
     final cfg = _buildConfig();
     if (cfg == null) return;
-    // Release the manual-test output so the scan engine owns the controller.
+    _saveSettings();
+    // Release the manual-test output so the scan engine owns the controller
+    // (two senders would fight over the same controller).
+    final wasConnected = _connected;
     await _disconnect();
     final CameraSource camera = (_useRtsp && _rtspSupported)
         ? RtspCameraSource(_rtspCtrl.text.trim())
         : CameraPackageSource();
     if (!mounted) return;
-    Navigator.of(context).push(MaterialPageRoute(
+    await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => ScanPage(config: cfg, camera: camera, mode: _scanMode),
     ));
+    // Returning from the scan: restore the manual-test connection so the user
+    // isn't silently disconnected after a scan.
+    if (mounted && wasConnected) await _connect();
   }
 
   TargetConfig? _buildConfig() {
@@ -86,6 +138,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
       protocol: _protocol,
       startUniverse: int.tryParse(_universeCtrl.text.trim()) ?? 1,
       startChannel: int.tryParse(_startChannelCtrl.text.trim()) ?? 1,
+      colorOrder: _colorOrder,
     );
   }
 
@@ -107,6 +160,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
         _currentPixel = 0;
         _status = 'Connected — sending ${cfg.protocol.label} to ${cfg.ip}.';
       });
+      _saveSettings();
     } catch (e) {
       setState(() => _status = 'Connect failed: $e');
     } finally {
@@ -129,7 +183,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     final out = _output;
     if (out == null) return;
     final clamped = index.clamp(0, out.pixelCount - 1);
-    await out.lightSingle(clamped);
+    await out.lightSingle(clamped, color: _testColor);
     setState(() => _currentPixel = clamped);
   }
 
@@ -144,10 +198,22 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     if (_chaseTimer == null) out.render();
   }
 
+  Widget _colorChip(String label, PixelColor c) {
+    return ChoiceChip(
+      label: Text(label),
+      selected: _testColor == c,
+      onSelected: (_) {
+        setState(() => _testColor = c);
+        // Re-light the current pixel so the new colour shows immediately.
+        if (_chaseTimer == null) _lightPixel(_currentPixel);
+      },
+    );
+  }
+
   Future<void> _allOn() async {
     final out = _output;
     if (out == null) return;
-    out.setAll(PixelColor.white);
+    out.setAll(_testColor);
     await out.render();
   }
 
@@ -201,6 +267,25 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
             ),
             keyboardType: TextInputType.number,
             enabled: !_connected,
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<ColorOrder>(
+            initialValue: _colorOrder,
+            decoration: const InputDecoration(
+              labelText: 'Color order',
+              helperText: 'Match your LEDs (WS2811 is often GRB)',
+              border: OutlineInputBorder(),
+            ),
+            items: [
+              for (final o in ColorOrder.values)
+                DropdownMenuItem(value: o, child: Text(o.label)),
+            ],
+            onChanged: (o) {
+              if (o == null) return;
+              setState(() => _colorOrder = o);
+              // Apply live so the manual test reflects it immediately.
+              if (_connected) _connect();
+            },
           ),
           const SizedBox(height: 12),
           SegmentedButton<Protocol>(
@@ -275,6 +360,23 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
                   ),
                 ),
                 Text('${(_brightness * 100).round()}%'),
+              ],
+            ),
+            Row(
+              children: [
+                const Text('Test color'),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Wrap(
+                    spacing: 8,
+                    children: [
+                      _colorChip('White', PixelColor.white),
+                      _colorChip('Red', PixelColor.red),
+                      _colorChip('Green', PixelColor.green),
+                      _colorChip('Blue', PixelColor.blue),
+                    ],
+                  ),
+                ),
               ],
             ),
             Text('Pixel ${_currentPixel + 1} of $pixelCount'),
