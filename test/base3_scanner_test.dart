@@ -139,6 +139,49 @@ void main() {
     expect(points[node].detected, isTrue);
   });
 
+  test('noisy LED cores collapse to one peak each (not thousands)', () {
+    // Each LED is a fat disk with per-pixel brightness jitter. Unblurred, every
+    // noise bump is a local maximum (the ~5000-peaks failure mode); the blur
+    // must collapse each LED to a single peak so the count tracks reality.
+    const numPixels = 20;
+    final positions = {
+      0: const Offset(60, 60),
+      5: const Offset(170, 120),
+      12: const Offset(260, 190),
+    };
+    final bits = Base3Codec.bitsFor(numPixels);
+    final codes = {
+      for (final e in positions.entries)
+        e.key: Base3Codec.encode(e.key + 1, bits)
+    };
+    final frames = <img.Image>[];
+    for (var i = 0; i < bits; i++) {
+      final im = img.Image(width: 320, height: 240);
+      img.fill(im, color: img.ColorRgb8(4, 4, 4));
+      positions.forEach((node, pos) {
+        final c = Base3Codec.colorForDigit(codes[node]!.codeUnitAt(i) - 0x30);
+        for (var dy = -7; dy <= 7; dy++) {
+          for (var dx = -7; dx <= 7; dx++) {
+            if (dx * dx + dy * dy > 49) continue;
+            final x = pos.dx.round() + dx, y = pos.dy.round() + dy;
+            // Deterministic brightness jitter -> lots of local maxima unblurred.
+            final f = 1.0 - ((x * 13 + y * 29) % 7) * 0.06;
+            im.setPixelRgb(
+                x, y, (c.r * f).round(), (c.g * f).round(), (c.b * f).round());
+          }
+        }
+      });
+      frames.add(im);
+    }
+
+    final result = const Base3Scanner().decodeImages(frames, null, numPixels);
+    expect(result.blobsFound, lessThan(numPixels), // ~3 LEDs, not thousands
+        reason: 'blur should collapse noisy cores: ${result.blobsFound}');
+    for (final node in positions.keys) {
+      expect(result.points[node].detected, isTrue, reason: 'node $node');
+    }
+  });
+
   test('decodes a bloomed pixel: white-clipped core with a coloured halo', () {
     // Bright LEDs photographed close up clip to white at the centre; only the
     // halo carries the hue. The colour vote must come from the halo.

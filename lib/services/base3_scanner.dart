@@ -46,7 +46,13 @@ class Base3Scanner {
   /// Detection signal (max RGB channel, ambient-subtracted) threshold.
   final int detectThreshold;
 
+  /// Box-blur radius applied to the signal before peak-finding. Smooths sensor
+  /// noise so each LED is one smooth bump (one peak) instead of dozens of noisy
+  /// local maxima. 0 disables.
+  final int blurRadius;
+
   /// A pixel is a peak candidate if no neighbour within this radius is brighter.
+  /// Larger windows reject noise specks inside a bright LED.
   final int peakWindow;
 
   /// Minimum half-size of the colour-sampling window around a peak.
@@ -72,7 +78,8 @@ class Base3Scanner {
 
   const Base3Scanner({
     this.detectThreshold = 50,
-    this.peakWindow = 1,
+    this.blurRadius = 2,
+    this.peakWindow = 2,
     this.sampleRadius = 2,
     this.maxColorReach = 8,
     this.chromaFloor = 12,
@@ -144,9 +151,10 @@ class Base3Scanner {
       }
     }
 
-    // 2. Find LED peaks (local maxima) and cap each one's colour-sampling reach
-    //    at half the gap to its nearest neighbour.
-    final peaks = _findPeaks(signal, w, h);
+    // 2. Denoise, then find LED peaks (local maxima), capping each one's
+    //    colour-sampling reach at half the gap to its nearest neighbour.
+    final smooth = _boxBlur(signal, w, h, blurRadius);
+    final peaks = _findPeaks(signal, smooth, w, h);
 
     // The valid codewords, regenerated exactly as the scan side drove them, as
     // digit lists. Decoding by nearest codeword (with erasures) lets a peak
@@ -177,6 +185,30 @@ class Base3Scanner {
     return Base3ScanResult(points, peaks.length);
   }
 
+  /// Square box blur of [r] over an 8-bit signal map. Smooths sensor noise so
+  /// each LED becomes a single smooth maximum.
+  static Uint8List _boxBlur(Uint8List src, int w, int h, int r) {
+    if (r <= 0) return src;
+    final out = Uint8List(w * h);
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var sum = 0, cnt = 0;
+        for (var dy = -r; dy <= r; dy++) {
+          final ny = y + dy;
+          if (ny < 0 || ny >= h) continue;
+          for (var dx = -r; dx <= r; dx++) {
+            final nx = x + dx;
+            if (nx < 0 || nx >= w) continue;
+            sum += src[ny * w + nx];
+            cnt++;
+          }
+        }
+        out[y * w + x] = (sum / cnt).round();
+      }
+    }
+    return out;
+  }
+
   static int _maxChannel(img.Pixel p) {
     final r = p.r.toInt();
     final g = p.g.toInt();
@@ -189,18 +221,21 @@ class Base3Scanner {
   /// to a single peak at their centroid. Each peak's colour-sampling reach is
   /// then capped at half the distance to its nearest neighbour, so adjacent LEDs
   /// never bleed into one another's colour read.
-  List<_Peak> _findPeaks(Uint8List signal, int w, int h) {
+  List<_Peak> _findPeaks(Uint8List signal, Uint8List smooth, int w, int h) {
+    // A peak is bright in the raw signal (so small LEDs aren't blurred away) and
+    // a local maximum in the smoothed signal (so sensor noise doesn't fragment
+    // one LED into many maxima).
     final isMax = Uint8List(w * h);
     for (var y = 0; y < h; y++) {
       for (var x = 0; x < w; x++) {
-        final s = signal[y * w + x];
-        if (s < detectThreshold) continue;
+        if (signal[y * w + x] < detectThreshold) continue;
+        final s = smooth[y * w + x];
         var peak = true;
         for (var dy = -peakWindow; dy <= peakWindow && peak; dy++) {
           for (var dx = -peakWindow; dx <= peakWindow; dx++) {
             final nx = x + dx, ny = y + dy;
             if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-            if (signal[ny * w + nx] > s) {
+            if (smooth[ny * w + nx] > s) {
               peak = false;
               break;
             }
