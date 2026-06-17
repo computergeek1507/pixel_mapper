@@ -1,9 +1,23 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 
 import 'camera_source.dart';
+
+/// Appends a line to `<appSupport>/camera_debug.log` for diagnosing camera
+/// failures on devices we can't observe directly.
+Future<void> _logCamera(String msg) async {
+  try {
+    final dir = await getApplicationSupportDirectory();
+    final f = File('${dir.path}/camera_debug.log');
+    await f.writeAsString('${DateTime.now().toIso8601String()}  $msg\n',
+        mode: FileMode.append, flush: true);
+  } catch (_) {}
+  debugPrint('CAMERA: $msg');
+}
 
 /// [CameraSource] backed by the first-party `camera` package. Works on Android,
 /// iOS, and on Windows via the endorsed `camera_windows` implementation (which
@@ -29,10 +43,17 @@ class CameraPackageSource implements CameraSource {
   @override
   Future<void> initialize() async {
     final cameras = await availableCameras();
+    final list = [
+      for (var i = 0; i < cameras.length; i++)
+        '[$i] "${cameras[i].name}" ${cameras[i].lensDirection.name}'
+    ].join(' | ');
+    await _logCamera('available (${cameras.length}): $list');
     if (cameras.isEmpty) {
       throw StateError('No cameras available on this device.');
     }
-    final camera = cameras[cameraIndex.clamp(0, cameras.length - 1)];
+    final idx = cameraIndex.clamp(0, cameras.length - 1);
+    final camera = cameras[idx];
+    await _logCamera('requested index=$cameraIndex -> using [$idx] "${camera.name}"');
 
     // Try the preferred resolution, then fall back to lower presets. Many
     // Windows webcams (and the virtual "AV stream" devices Windows enumerates)
@@ -49,9 +70,11 @@ class CameraPackageSource implements CameraSource {
       try {
         await controller.initialize();
         _controller = controller;
+        await _logCamera('SUCCESS "${camera.name}" @ $preset');
         return;
       } catch (e) {
         lastError = e;
+        await _logCamera('FAIL "${camera.name}" @ $preset: $e');
         await controller.dispose().catchError((_) {});
       }
     }

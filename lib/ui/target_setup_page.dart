@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:camera/camera.dart' show CameraDescription, CameraLensDirection;
+import 'package:camera/camera.dart' show CameraDescription;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -77,13 +77,14 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
   String _cameraLabel(int i) {
     if (i < 0 || i >= _cameras.length) return 'Camera $i';
     final c = _cameras[i];
-    final dir = switch (c.lensDirection) {
-      CameraLensDirection.front => 'front',
-      CameraLensDirection.back => 'back',
-      CameraLensDirection.external => 'external',
-    };
-    final name = c.name.isNotEmpty ? c.name : 'Camera $i';
-    return '$name ($dir)';
+    // Windows reports the full device path after " <"; keep only the friendly
+    // name. Network "AvStream" devices are IP cameras the plugin can't open.
+    var name = c.name;
+    final lt = name.indexOf(' <');
+    if (lt > 0) name = name.substring(0, lt);
+    if (name.startsWith('AvStream')) name = 'Network camera $i (may not open)';
+    if (name.isEmpty) name = 'Camera $i';
+    return name;
   }
 
   /// Restores the last-used settings so the user doesn't re-enter them.
