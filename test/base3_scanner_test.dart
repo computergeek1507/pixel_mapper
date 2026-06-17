@@ -219,6 +219,42 @@ void main() {
     }
   });
 
+  test('registers handheld drift: each frame shifted, still decodes', () {
+    // Simulate camera drift: every LED in frame i is offset by (i*3, i*2) px.
+    // Without registration, reading a fixed position lands on a neighbour in
+    // later frames; the frame-alignment must compensate.
+    const numPixels = 20;
+    final base = {
+      0: const Offset(60, 60),
+      5: const Offset(180, 80),
+      12: const Offset(240, 170),
+      19: const Offset(90, 190),
+    };
+    final bits = Base3Codec.bitsFor(numPixels);
+    final codes = {
+      for (final e in base.entries) e.key: Base3Codec.encode(e.key + 1, bits)
+    };
+    final frames = <img.Image>[];
+    for (var i = 0; i < bits; i++) {
+      final im = img.Image(width: 320, height: 240);
+      img.fill(im, color: img.ColorRgb8(4, 4, 4));
+      base.forEach((node, pos) {
+        final c = Base3Codec.colorForDigit(codes[node]!.codeUnitAt(i) - 0x30);
+        img.fillCircle(im,
+            x: (pos.dx + i * 3).round(),
+            y: (pos.dy + i * 2).round(),
+            radius: 4,
+            color: img.ColorRgb8(c.r, c.g, c.b));
+      });
+      frames.add(im);
+    }
+
+    final points = const Base3Scanner().decodeImages(frames, null, numPixels).points;
+    final detected = base.keys.where((n) => points[n].detected).length;
+    expect(detected, greaterThanOrEqualTo(base.length - 1),
+        reason: 'registration should recover drifted frames');
+  });
+
   test('decodes a bloomed pixel: white-clipped core with a coloured halo', () {
     // Bright LEDs photographed close up clip to white at the centre; only the
     // halo carries the hue. The colour vote must come from the halo.

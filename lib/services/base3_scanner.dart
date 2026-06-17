@@ -63,6 +63,10 @@ class Base3Scanner {
   /// densely-packed LEDs separable at the cost of more work.
   final int analyzeWidth;
 
+  /// Width the brightness maps are downscaled to for frame registration (camera
+  /// drift estimation). Smaller is faster; the shift is scaled back to full res.
+  final int alignWidth;
+
   const Base3Scanner({
     this.detectThreshold = 50,
     this.minBlobArea = 3,
@@ -72,6 +76,7 @@ class Base3Scanner {
     // (e.g. orange-ish red), so a higher ratio erased correct reads.
     this.confidenceRatio = 1.0,
     this.analyzeWidth = 1920,
+    this.alignWidth = 480,
   });
 
   /// Decodes encoded image bytes (one per base-3 frame). Suitable for running
@@ -115,14 +120,26 @@ class Base3Scanner {
     final w = frames.first.width;
     final h = frames.first.height;
 
-    // 1. Max-projection of the max-channel signal across all frames (every
-    //    pixel is lit in every frame, so this surfaces them all), minus ambient.
+    // 0. Register frames: the camera drifts between the sequential photos
+    //    (handheld), so estimate each frame's pixel shift relative to frame 0.
+    //    Without this, a fixed read position lands on a neighbouring LED in
+    //    later frames and the colour sequence is garbage.
+    final shifts = _estimateShifts(frames, w, h);
+
+    // 1. Aligned max-projection of the max-channel signal across all frames
+    //    (every pixel is lit in every frame, so this surfaces them all), minus
+    //    ambient. Each frame is sampled at its registered offset.
     final signal = Uint8List(w * h);
-    for (final f in frames) {
+    for (var fi = 0; fi < frames.length; fi++) {
+      final f = frames[fi];
+      final sx = shifts[fi][0], sy = shifts[fi][1];
       for (var y = 0; y < h; y++) {
+        final yi = y + sy;
+        if (yi < 0 || yi >= h) continue;
         for (var x = 0; x < w; x++) {
-          final p = f.getPixel(x, y);
-          final m = _maxChannel(p);
+          final xi = x + sx;
+          if (xi < 0 || xi >= w) continue;
+          final m = _maxChannel(f.getPixel(xi, yi));
           final idx = y * w + x;
           if (m > signal[idx]) signal[idx] = m;
         }
@@ -152,9 +169,14 @@ class Base3Scanner {
       return List<int>.generate(s.length, (i) => s.codeUnitAt(i) - 0x30);
     });
 
-    // 3. Read every blob's colour sequence (digits, -1 = erasure).
+    // 3. Read every blob's colour sequence (digits, -1 = erasure), sampling
+    //    each frame at the blob's registered position for that frame.
     final reads = [
-      for (final b in blobs) [for (final f in frames) _dominantDigit(f, b, w)]
+      for (final b in blobs)
+        [
+          for (var fi = 0; fi < frames.length; fi++)
+            _dominantDigit(frames[fi], b, w, shifts[fi][0], shifts[fi][1])
+        ]
     ];
 
     // Auto-detect colour order: the camera sees R/G/B permuted if the LEDs use a
@@ -212,6 +234,89 @@ class Base3Scanner {
     return max(r, max(g, b));
   }
 
+  /// Estimates each frame's pixel shift relative to frame 0 (camera drift during
+  /// the handheld capture). Returns full-resolution [dx, dy] per frame; frame 0
+  /// is [0, 0]. The bright LED pattern is identical across frames apart from the
+  /// shift, so aligning downscaled brightness maps recovers it robustly.
+  List<List<int>> _estimateShifts(List<img.Image> frames, int w, int h) {
+    final shifts = List.generate(frames.length, (_) => <int>[0, 0]);
+    if (frames.length <= 1) return shifts;
+
+    final dw = w > alignWidth ? alignWidth : w;
+    final factor = w / dw;
+    final dh = (h / factor).round().clamp(1, h);
+    final maps = <Uint8List>[];
+    for (final f in frames) {
+      final small =
+          (f.width > dw) ? img.copyResize(f, width: dw, height: dh) : f;
+      final m = Uint8List(dw * dh);
+      for (var y = 0; y < dh; y++) {
+        final sy = y < small.height ? y : small.height - 1;
+        for (var x = 0; x < dw; x++) {
+          final sx = x < small.width ? x : small.width - 1;
+          m[y * dw + x] = _maxChannel(small.getPixel(sx, sy));
+        }
+      }
+      maps.add(m);
+    }
+
+    final ref = maps[0];
+    for (var i = 1; i < frames.length; i++) {
+      final s = _stepSearch(maps[i], ref, dw, dh);
+      shifts[i] = [(s[0] * factor).round(), (s[1] * factor).round()];
+    }
+    return shifts;
+  }
+
+  /// Logarithmic (diamond) search for the [dx, dy] minimizing mean abs
+  /// difference between [m] shifted and [ref]. Cheap vs full search and reliable
+  /// because the LED pattern has a single strong alignment optimum.
+  List<int> _stepSearch(Uint8List m, Uint8List ref, int dw, int dh) {
+    var bx = 0, by = 0;
+    var best = _meanAbsDiff(m, ref, dw, dh, 0, 0);
+    const dirs = [
+      [1, 0], [-1, 0], [0, 1], [0, -1],
+      [1, 1], [1, -1], [-1, 1], [-1, -1], //
+    ];
+    for (var step = 16; step >= 1; step ~/= 2) {
+      var improved = true;
+      while (improved) {
+        improved = false;
+        for (final d in dirs) {
+          final nx = bx + d[0] * step, ny = by + d[1] * step;
+          final c = _meanAbsDiff(m, ref, dw, dh, nx, ny);
+          if (c < best) {
+            best = c;
+            bx = nx;
+            by = ny;
+            improved = true;
+          }
+        }
+      }
+    }
+    return [bx, by];
+  }
+
+  /// Mean absolute difference of [m] shifted by ([dx],[dy]) against [ref] over
+  /// their overlap (normalized, so larger shifts aren't unfairly favoured).
+  double _meanAbsDiff(
+      Uint8List m, Uint8List ref, int dw, int dh, int dx, int dy) {
+    var sum = 0, cnt = 0;
+    for (var y = 0; y < dh; y++) {
+      final yi = y + dy;
+      if (yi < 0 || yi >= dh) continue;
+      for (var x = 0; x < dw; x++) {
+        final xi = x + dx;
+        if (xi < 0 || xi >= dw) continue;
+        sum += (m[yi * dw + xi] - ref[y * dw + x]).abs();
+        cnt++;
+      }
+    }
+    // Require meaningful overlap; otherwise treat as a poor match.
+    if (cnt < dw * dh ~/ 4) return 1e9;
+    return sum / cnt;
+  }
+
   /// Classifies blob [b]'s colour in frame [f] as a base-3 digit (0=R,1=G,2=B),
   /// or -1 (erasure) if no sample is colourful enough or the vote is too close.
   ///
@@ -219,10 +324,11 @@ class Base3Scanner {
   /// per-pixel minimum — which discards the white/grey component, so a centre
   /// blown out to white still reads (its coloured edge votes) and the camera's
   /// auto white-balance tinting the frame doesn't fool it.
-  int _dominantDigit(img.Image f, _Blob b, int w) {
+  int _dominantDigit(img.Image f, _Blob b, int w, int sx, int sy) {
     var vr = 0, vg = 0, vb = 0;
     for (final idx in b.pixels) {
-      final x = idx % w, y = idx ~/ w;
+      final x = idx % w + sx, y = idx ~/ w + sy;
+      if (x < 0 || y < 0 || x >= f.width || y >= f.height) continue;
       final px = f.getPixel(x, y);
       final r = px.r.toInt();
       final g = px.g.toInt();
