@@ -7,26 +7,26 @@ import 'package:image/image.dart' as img;
 import '../models/detected_point.dart';
 import 'base3_codec.dart';
 
-/// A detected LED candidate: a brightness peak in the max-projection signal.
-/// [reach] is how far to sample colour around it (capped at half the distance
-/// to the nearest other peak, so neighbouring LEDs don't bleed into the read).
-class _Peak {
-  final int x;
-  final int y;
-  final int signal;
-  int reach;
-  _Peak(this.x, this.y, this.signal, this.reach);
+/// One detected bright region (an LED, or a cluster of touching LEDs). Holds the
+/// pixel indices that make it up so colour can be read over exactly those
+/// pixels — no background, no neighbouring LED.
+class _Blob {
+  final double cx;
+  final double cy;
+  final List<int> pixels; // indices into the w*h signal map
+  _Blob(this.cx, this.cy, this.pixels);
+  int get area => pixels.length;
 }
 
 class _Candidate {
   final double normX;
   final double normY;
-  final int signal;
-  const _Candidate(this.normX, this.normY, this.signal);
+  final int area;
+  const _Candidate(this.normX, this.normY, this.area);
 }
 
-/// Result of a base-3 decode: the per-pixel points plus how many distinct LED
-/// peaks were found (a diagnostic: peaks far below the pixel count means the
+/// Result of a base-3 decode: the per-pixel points plus how many distinct bright
+/// regions were found (a diagnostic: regions far below the pixel count means the
 /// camera can't separate the LEDs, not that decoding failed).
 class Base3ScanResult {
   final List<DetectedPoint> points;
@@ -38,29 +38,16 @@ class Base3ScanResult {
 /// per-pixel positions. Every pixel is lit in every frame; in frame `i` it
 /// shows the colour of the i-th base-3 digit of its index.
 ///
-/// Because every LED is lit in every frame, a single bright "blob" mask would
-/// merge adjacent LEDs, so we instead find every brightness *peak* (each LED is
-/// a local maximum), read its colour per frame, and match the colour sequence
-/// to the nearest valid codeword.
+/// We find each bright region (connected component of the ambient-subtracted
+/// max-projection), read its colour over its own pixels in every frame, and
+/// match the colour sequence to the nearest valid codeword.
 class Base3Scanner {
   /// Detection signal (max RGB channel, ambient-subtracted) threshold.
   final int detectThreshold;
 
-  /// Box-blur radius applied to the signal before peak-finding. Smooths sensor
-  /// noise so each LED is one smooth bump (one peak) instead of dozens of noisy
-  /// local maxima. 0 disables.
-  final int blurRadius;
-
-  /// A pixel is a peak candidate if no neighbour within this radius is brighter.
-  /// Larger windows reject noise specks inside a bright LED.
-  final int peakWindow;
-
-  /// Minimum half-size of the colour-sampling window around a peak.
-  final int sampleRadius;
-
-  /// Hard cap on the colour-sampling window, so an isolated bloomed LED reads
-  /// its coloured halo without an unbounded scan.
-  final int maxColorReach;
+  /// Minimum connected-component area (analyzed px) to count as an LED, so
+  /// sensor speckle doesn't register as a pixel.
+  final int minBlobArea;
 
   /// Minimum per-pixel chroma (dominant channel minus the channel minimum) for
   /// a sample to vote on the colour. Filters out white/grey bloom and ambient
@@ -78,13 +65,10 @@ class Base3Scanner {
 
   const Base3Scanner({
     this.detectThreshold = 50,
-    this.blurRadius = 2,
-    this.peakWindow = 2,
-    this.sampleRadius = 2,
-    this.maxColorReach = 8,
+    this.minBlobArea = 3,
     this.chromaFloor = 12,
     this.confidenceRatio = 1.25,
-    this.analyzeWidth = 1280,
+    this.analyzeWidth = 1920,
   });
 
   /// Decodes encoded image bytes (one per base-3 frame). Suitable for running
@@ -151,13 +135,13 @@ class Base3Scanner {
       }
     }
 
-    // 2. Denoise, then find LED peaks (local maxima), capping each one's
-    //    colour-sampling reach at half the gap to its nearest neighbour.
-    final smooth = _boxBlur(signal, w, h, blurRadius);
-    final peaks = _findPeaks(signal, smooth, w, h);
+    // 2. Connected components of the bright mask -> one blob per LED (or per
+    //    touching cluster). Robust to in-LED sensor noise, which would shatter
+    //    a peak-based detector.
+    final blobs = _connectedComponents(signal, w, h);
 
     // The valid codewords, regenerated exactly as the scan side drove them, as
-    // digit lists. Decoding by nearest codeword (with erasures) lets a peak
+    // digit lists. Decoding by nearest codeword (with erasures) lets a blob
     // with one bad or unreadable frame still resolve, instead of being dropped.
     final bits = Base3Codec.bitsFor(numPixels);
     final codes = List<List<int>>.generate(numPixels, (j) {
@@ -165,16 +149,16 @@ class Base3Scanner {
       return List<int>.generate(s.length, (i) => s.codeUnitAt(i) - 0x30);
     });
 
-    // 3. Read each peak's colour sequence and match it to a pixel.
+    // 3. Read each blob's colour sequence and match it to a pixel.
     final best = <int, _Candidate>{};
-    for (final p in peaks) {
-      final read = [for (final f in frames) _dominantDigit(f, p, signal, w)];
+    for (final b in blobs) {
+      final read = [for (final f in frames) _dominantDigit(f, b, w)];
       final pixel = _matchCodeword(read, codes);
       if (pixel < 1 || pixel > numPixels) continue;
-      // On duplicate decode, keep the brighter peak.
-      final cand = _Candidate(p.x / w, p.y / h, p.signal);
+      // On duplicate decode, keep the larger blob.
+      final cand = _Candidate(b.cx / w, b.cy / h, b.area);
       final prev = best[pixel];
-      if (prev == null || cand.signal > prev.signal) best[pixel] = cand;
+      if (prev == null || cand.area > prev.area) best[pixel] = cand;
     }
 
     best.forEach((pixel, cand) {
@@ -182,31 +166,7 @@ class Base3Scanner {
       point.screenXY = Offset(cand.normX, cand.normY);
       point.brightness = 255;
     });
-    return Base3ScanResult(points, peaks.length);
-  }
-
-  /// Square box blur of [r] over an 8-bit signal map. Smooths sensor noise so
-  /// each LED becomes a single smooth maximum.
-  static Uint8List _boxBlur(Uint8List src, int w, int h, int r) {
-    if (r <= 0) return src;
-    final out = Uint8List(w * h);
-    for (var y = 0; y < h; y++) {
-      for (var x = 0; x < w; x++) {
-        var sum = 0, cnt = 0;
-        for (var dy = -r; dy <= r; dy++) {
-          final ny = y + dy;
-          if (ny < 0 || ny >= h) continue;
-          for (var dx = -r; dx <= r; dx++) {
-            final nx = x + dx;
-            if (nx < 0 || nx >= w) continue;
-            sum += src[ny * w + nx];
-            cnt++;
-          }
-        }
-        out[y * w + x] = (sum / cnt).round();
-      }
-    }
-    return out;
+    return Base3ScanResult(points, blobs.length);
   }
 
   static int _maxChannel(img.Pixel p) {
@@ -216,118 +176,31 @@ class Base3Scanner {
     return max(r, max(g, b));
   }
 
-  /// Finds one LED peak per local-maximum region. Every pixel that no neighbour
-  /// outshines is flagged; connected flagged pixels (a flat bright core) collapse
-  /// to a single peak at their centroid. Each peak's colour-sampling reach is
-  /// then capped at half the distance to its nearest neighbour, so adjacent LEDs
-  /// never bleed into one another's colour read.
-  List<_Peak> _findPeaks(Uint8List signal, Uint8List smooth, int w, int h) {
-    // A peak is bright in the raw signal (so small LEDs aren't blurred away) and
-    // a local maximum in the smoothed signal (so sensor noise doesn't fragment
-    // one LED into many maxima).
-    final isMax = Uint8List(w * h);
-    for (var y = 0; y < h; y++) {
-      for (var x = 0; x < w; x++) {
-        if (signal[y * w + x] < detectThreshold) continue;
-        final s = smooth[y * w + x];
-        var peak = true;
-        for (var dy = -peakWindow; dy <= peakWindow && peak; dy++) {
-          for (var dx = -peakWindow; dx <= peakWindow; dx++) {
-            final nx = x + dx, ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-            if (smooth[ny * w + nx] > s) {
-              peak = false;
-              break;
-            }
-          }
-        }
-        if (peak) isMax[y * w + x] = 1;
-      }
-    }
-
-    // Connected components over the local-max mask -> one peak per region.
-    final visited = Uint8List(w * h);
-    final peaks = <_Peak>[];
-    final queue = <int>[];
-    for (var start = 0; start < isMax.length; start++) {
-      if (visited[start] == 1 || isMax[start] == 0) continue;
-      visited[start] = 1;
-      queue
-        ..clear()
-        ..add(start);
-      var sumX = 0, sumY = 0, count = 0, peakSig = 0;
-      while (queue.isNotEmpty) {
-        final idx = queue.removeLast();
-        final x = idx % w, y = idx ~/ w;
-        sumX += x;
-        sumY += y;
-        count++;
-        if (signal[idx] > peakSig) peakSig = signal[idx];
-        for (var dy = -1; dy <= 1; dy++) {
-          for (var dx = -1; dx <= 1; dx++) {
-            if (dx == 0 && dy == 0) continue;
-            final nx = x + dx, ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-            final nidx = ny * w + nx;
-            if (visited[nidx] == 1 || isMax[nidx] == 0) continue;
-            visited[nidx] = 1;
-            queue.add(nidx);
-          }
-        }
-      }
-      peaks.add(_Peak(
-          (sumX / count).round(), (sumY / count).round(), peakSig, sampleRadius));
-    }
-
-    // Reach = half the distance to the nearest other peak (clamped), so the
-    // colour sample stays on this LED even when neighbours are close.
-    for (final p in peaks) {
-      var nearest = 1 << 30;
-      for (final o in peaks) {
-        if (identical(o, p)) continue;
-        final ddx = o.x - p.x, ddy = o.y - p.y;
-        final d2 = ddx * ddx + ddy * ddy;
-        if (d2 < nearest) nearest = d2;
-      }
-      final half = (sqrt(nearest) / 2).floor();
-      p.reach = half.clamp(sampleRadius, maxColorReach);
-    }
-    return peaks;
-  }
-
-  /// Classifies a peak's colour in frame [f] as a base-3 digit (0=R,1=G,2=B),
+  /// Classifies blob [b]'s colour in frame [f] as a base-3 digit (0=R,1=G,2=B),
   /// or -1 (erasure) if no sample is colourful enough or the vote is too close.
   ///
-  /// Each sample votes by *chroma* — its channel value minus the per-pixel
-  /// minimum — which discards the white/grey component, so a centre blown out
-  /// to white (the coloured halo still votes) and an auto white-balance tint
-  /// don't fool it.
-  int _dominantDigit(img.Image f, _Peak p, Uint8List signal, int w) {
-    final reach = p.reach;
+  /// Votes over the blob's own pixels by *chroma* — each channel minus the
+  /// per-pixel minimum — which discards the white/grey component, so a centre
+  /// blown out to white still reads (its coloured edge votes) and the camera's
+  /// auto white-balance tinting the frame doesn't fool it.
+  int _dominantDigit(img.Image f, _Blob b, int w) {
     var vr = 0, vg = 0, vb = 0;
-    for (var dy = -reach; dy <= reach; dy++) {
-      for (var dx = -reach; dx <= reach; dx++) {
-        final x = p.x + dx;
-        final y = p.y + dy;
-        if (x < 0 || y < 0 || x >= f.width || y >= f.height) continue;
-        // Only sample LED pixels (bright in the max-projection); skip the
-        // background, whose colour may be tinted by the camera white-balance.
-        if (signal[y * w + x] < detectThreshold) continue;
-        final px = f.getPixel(x, y);
-        final r = px.r.toInt();
-        final g = px.g.toInt();
-        final b0 = px.b.toInt();
-        final m = min(r, min(g, b0)); // white/grey/ambient component
-        final cr = r - m, cg = g - m, cb = b0 - m; // chroma per channel
-        final topc = max(cr, max(cg, cb));
-        if (topc < chromaFloor) continue; // colourless -> no vote
-        if (topc == cr) {
-          vr += cr;
-        } else if (topc == cg) {
-          vg += cg;
-        } else {
-          vb += cb;
-        }
+    for (final idx in b.pixels) {
+      final x = idx % w, y = idx ~/ w;
+      final px = f.getPixel(x, y);
+      final r = px.r.toInt();
+      final g = px.g.toInt();
+      final b0 = px.b.toInt();
+      final m = min(r, min(g, b0)); // white/grey/ambient component
+      final cr = r - m, cg = g - m, cb = b0 - m; // chroma per channel
+      final topc = max(cr, max(cg, cb));
+      if (topc < chromaFloor) continue; // colourless -> no vote
+      if (topc == cr) {
+        vr += cr;
+      } else if (topc == cg) {
+        vg += cg;
+      } else {
+        vb += cb;
       }
     }
     final top = max(vr, max(vg, vb));
@@ -379,5 +252,46 @@ class Base3Scanner {
     if (bestCost > maxAcceptCost) return -1;
     if (secondCost - bestCost < minMargin) return -1; // ambiguous
     return bestPixel;
+  }
+
+  /// BFS connected-component labeling over the thresholded signal, collecting
+  /// each component's pixels and intensity-weighted centroid.
+  List<_Blob> _connectedComponents(Uint8List signal, int w, int h) {
+    final visited = Uint8List(w * h);
+    final blobs = <_Blob>[];
+    final queue = <int>[];
+    for (var start = 0; start < signal.length; start++) {
+      if (visited[start] == 1 || signal[start] < detectThreshold) continue;
+      visited[start] = 1;
+      queue
+        ..clear()
+        ..add(start);
+      final pixels = <int>[];
+      double sumX = 0, sumY = 0, sumW = 0;
+      while (queue.isNotEmpty) {
+        final idx = queue.removeLast();
+        final x = idx % w, y = idx ~/ w;
+        final s = signal[idx];
+        pixels.add(idx);
+        sumX += x * s;
+        sumY += y * s;
+        sumW += s;
+        for (var dy = -1; dy <= 1; dy++) {
+          for (var dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            final nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            final nidx = ny * w + nx;
+            if (visited[nidx] == 1 || signal[nidx] < detectThreshold) continue;
+            visited[nidx] = 1;
+            queue.add(nidx);
+          }
+        }
+      }
+      if (pixels.length >= minBlobArea && sumW > 0) {
+        blobs.add(_Blob(sumX / sumW, sumY / sumW, pixels));
+      }
+    }
+    return blobs;
   }
 }

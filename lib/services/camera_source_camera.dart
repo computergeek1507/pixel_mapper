@@ -16,7 +16,8 @@ class CameraPackageSource implements CameraSource {
 
   CameraPackageSource({
     this.cameraIndex = 0,
-    this.resolution = ResolutionPreset.high,
+    // Higher resolution so densely-packed LEDs stay separable in the capture.
+    this.resolution = ResolutionPreset.veryHigh,
   });
 
   /// Enumerates available cameras (for a picker in the UI).
