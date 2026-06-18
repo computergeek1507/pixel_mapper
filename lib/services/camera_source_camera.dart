@@ -30,8 +30,10 @@ class CameraPackageSource implements CameraSource {
 
   CameraPackageSource({
     this.cameraIndex = 0,
-    // Higher resolution so densely-packed LEDs stay separable in the capture.
-    this.resolution = ResolutionPreset.veryHigh,
+    // `high` (≈720p) renders reliably; veryHigh/max made some back-camera
+    // previews come up black on camera_android_camerax. Still plenty of detail
+    // for the scan (we capture stills, not a low-res stream).
+    this.resolution = ResolutionPreset.high,
   });
 
   /// Enumerates available cameras (for a picker in the UI).

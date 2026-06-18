@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:camera/camera.dart' show CameraDescription;
+import 'package:camera/camera.dart' show CameraDescription, CameraLensDirection;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -87,9 +87,15 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     var name = c.name;
     final lt = name.indexOf(' <');
     if (lt > 0) name = name.substring(0, lt);
-    if (name.startsWith('AvStream')) name = 'Network camera $i (may not open)';
-    if (name.isEmpty) name = 'Camera $i';
-    return name;
+    final dir = switch (c.lensDirection) {
+      CameraLensDirection.back => 'Back',
+      CameraLensDirection.front => 'Front',
+      CameraLensDirection.external => 'External',
+    };
+    if (name.startsWith('AvStream')) return 'Network camera $i (may not open)';
+    // Android reports bare numeric IDs — show the lens direction instead.
+    if (name.isEmpty || int.tryParse(name) != null) return '$dir camera';
+    return '$name ($dir)';
   }
 
   /// Restores the last-used settings so the user doesn't re-enter them.
