@@ -36,7 +36,10 @@ dependencies:
   cupertino_icons: ^1.0.8
 
   # Camera capture: native on Android/iOS, webcam/Connected Camera on Windows.
-  camera: ^0.12.0+1
+  # Pinned to 0.11: camera 0.12 / camera_android_camerax 0.7.x gave a black
+  # back-camera preview on Android, and 0.12 bought us nothing (the C920 on
+  # Windows goes through media_kit, not camera_windows).
+  camera: ^0.11.0
   camera_windows: ^0.2.0
   # RTSP network-camera playback + frame grab. Windows-only: the RTSP option is
   # gated to Windows at runtime, and only the Windows native libs (libmpv) are
@@ -57,6 +60,7 @@ dependencies:
   shared_preferences: ^2.3.2
   # Stable sACN CID generation (also pulled in transitively by media_kit).
   uuid: ^4.5.1
+  wakelock_plus: ^1.5.2
   # UDP pixel data uses dart:io RawDatagramSocket directly — no package.
 
 dev_dependencies:

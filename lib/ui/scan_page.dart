@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/target_config.dart';
 import '../services/camera_source.dart';
@@ -32,6 +33,9 @@ class _ScanPageState extends State<ScanPage> {
   @override
   void initState() {
     super.initState();
+    // A long sequential scan has no touch input, so keep the screen awake —
+    // otherwise it sleeps and the camera/scan pauses.
+    WakelockPlus.enable();
     _scan = ScanController(
         config: widget.config, camera: widget.camera, mode: widget.mode);
     _scan.addListener(_onChange);
@@ -52,6 +56,7 @@ class _ScanPageState extends State<ScanPage> {
 
   @override
   void dispose() {
+    WakelockPlus.disable();
     _scan.removeListener(_onChange);
     _scan.close();
     super.dispose();
