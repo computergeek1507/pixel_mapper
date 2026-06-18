@@ -123,8 +123,9 @@ class Base3Scanner {
   Base3ScanResult decodeBytes(
     List<Uint8List> frameBytes,
     Uint8List? referenceBytes,
-    int numPixels,
-  ) {
+    int numPixels, [
+    int framesPerState = 1,
+  ]) {
     final frames = <img.Image>[];
     for (final b in frameBytes) {
       final decoded = img.decodeImage(b);
@@ -143,15 +144,18 @@ class Base3Scanner {
         ref = img.copyResize(r, width: frames[0].width, height: frames[0].height);
       }
     }
-    return decodeImages(frames, ref, numPixels);
+    return decodeImages(frames, ref, numPixels, framesPerState);
   }
 
   /// Core decode on already-decoded frames. Exposed for unit testing.
+  /// [framesPerState] stills were captured per base-3 frame; each LED's colour
+  /// for a frame is the majority vote across those stills (rejects bad frames).
   Base3ScanResult decodeImages(
     List<img.Image> frames,
     img.Image? reference,
-    int numPixels,
-  ) {
+    int numPixels, [
+    int framesPerState = 1,
+  ]) {
     final points =
         List.generate(numPixels, (i) => DetectedPoint(nodeIndex: i));
     if (frames.isEmpty) return Base3ScanResult(points, 0);
@@ -207,17 +211,12 @@ class Base3Scanner {
       return List<int>.generate(s.length, (i) => s.codeUnitAt(i) - 0x30);
     });
 
-    // 3. Read every blob's colour sequence (digits, -1 = erasure), sampling
-    //    each frame at the blob's registered position for that frame.
+    // 3. Read every blob's colour sequence (one digit per base-3 frame, -1 =
+    //    erasure), majority-voting across the stills captured for that frame.
+    final repeats = framesPerState < 1 ? 1 : framesPerState;
     final reads = [
       for (final b in blobs)
-        [
-          for (var fi = 0; fi < frames.length; fi++)
-            () {
-              final s = fields[fi].at(b.cx.round(), b.cy.round());
-              return _dominantDigit(frames[fi], b, w, s[0], s[1], reference);
-            }()
-        ]
+        _blobRead(b, frames, fields, w, reference, bits, repeats)
     ];
 
     // Auto-detect colour order: the camera sees R/G/B permuted if the LEDs use a
@@ -402,6 +401,38 @@ class Base3Scanner {
   /// per-pixel minimum — which discards the white/grey component, so a centre
   /// blown out to white still reads (its coloured edge votes) and the camera's
   /// auto white-balance tinting the frame doesn't fool it.
+  /// Reads a blob's per-base-3-frame digit sequence. For each frame, the colour
+  /// is the majority vote across its [repeats] stills (ties / all-unreadable ->
+  /// -1 erasure), so a single bad still doesn't corrupt the read.
+  List<int> _blobRead(_Blob b, List<img.Image> frames, List<_ShiftField> fields,
+      int w, img.Image? ref, int bits, int repeats) {
+    final cx = b.cx.round(), cy = b.cy.round();
+    final read = List<int>.filled(bits, -1);
+    for (var s = 0; s < bits; s++) {
+      var c0 = 0, c1 = 0, c2 = 0;
+      for (var k = 0; k < repeats; k++) {
+        final fi = s * repeats + k;
+        if (fi >= frames.length) break;
+        final sh = fields[fi].at(cx, cy);
+        final d = _dominantDigit(frames[fi], b, w, sh[0], sh[1], ref);
+        if (d == 0) {
+          c0++;
+        } else if (d == 1) {
+          c1++;
+        } else if (d == 2) {
+          c2++;
+        }
+      }
+      final mx = max(c0, max(c1, c2));
+      if (mx == 0) continue; // all erasures -> leave -1
+      final winners =
+          (c0 == mx ? 1 : 0) + (c1 == mx ? 1 : 0) + (c2 == mx ? 1 : 0);
+      if (winners != 1) continue; // tie -> erasure
+      read[s] = c0 == mx ? 0 : (c1 == mx ? 1 : 2);
+    }
+    return read;
+  }
+
   int _dominantDigit(
       img.Image f, _Blob b, int w, int sx, int sy, img.Image? ref) {
     var vr = 0, vg = 0, vb = 0;

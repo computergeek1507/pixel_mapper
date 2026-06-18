@@ -86,6 +86,7 @@ class ScanController extends ChangeNotifier {
     this.settleDelayMs = 60,
     this.mode = ScanMode.sequential,
     this.warmupMs = 1500,
+    this.framesPerState = 3,
   })  : output = output ?? createPixelOutput(config.protocol),
         detector = detector ?? const ImageBrightSpotDetector();
 
@@ -93,6 +94,11 @@ class ScanController extends ChangeNotifier {
   /// (e.g. the C920 via media_kit) settles its auto focus/exposure on the lit
   /// scene first. The base-3 frames keep every pixel lit, so it stays stable.
   int warmupMs;
+
+  /// Stills captured per base-3 frame in fast mode. The decoder majority-votes
+  /// each LED's colour across them, so a single bad still (motion, glare,
+  /// autofocus blip) doesn't corrupt the read — like xLights' video approach.
+  int framesPerState;
 
   final List<DetectedPoint> points = [];
   ScanState state = ScanState.idle;
@@ -212,15 +218,21 @@ class ScanController extends ChangeNotifier {
       }
       await output.render();
       await _settle();
-      frames.add(await camera.captureFrame());
+      // Capture several stills of this frame; the decoder majority-votes each
+      // LED's colour across them to reject any single bad still.
+      final repeats = framesPerState < 1 ? 1 : framesPerState;
+      for (var k = 0; k < repeats; k++) {
+        frames.add(await camera.captureFrame());
+      }
       lastFrame = frames.last;
       currentIndex = i;
       notifyListeners();
     }
 
     final refBytes = referenceFrame;
-    final result = await Isolate.run(
-        () => const Base3Scanner().decodeBytes(frames, refBytes, numPixels));
+    final repeats = framesPerState < 1 ? 1 : framesPerState;
+    final result = await Isolate.run(() =>
+        const Base3Scanner().decodeBytes(frames, refBytes, numPixels, repeats));
     lastBlobsFound = result.blobsFound;
     points
       ..clear()

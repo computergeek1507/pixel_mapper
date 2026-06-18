@@ -255,6 +255,46 @@ void main() {
         reason: 'registration should recover drifted frames');
   });
 
+  test('majority-votes colour across repeated stills (rejects a bad still)', () {
+    // 3 stills per base-3 frame, the middle one deliberately the wrong colour.
+    // Majority (2 of 3 correct) must still decode every pixel.
+    const numPixels = 20;
+    const repeats = 3;
+    final positions = {
+      0: const Offset(50, 50),
+      5: const Offset(160, 90),
+      12: const Offset(250, 170),
+    };
+    final bits = Base3Codec.bitsFor(numPixels);
+    final codes = {
+      for (final e in positions.entries) e.key: Base3Codec.encode(e.key + 1, bits)
+    };
+    final frames = <img.Image>[];
+    for (var s = 0; s < bits; s++) {
+      for (var k = 0; k < repeats; k++) {
+        final im = img.Image(width: 320, height: 240);
+        img.fill(im, color: img.ColorRgb8(4, 4, 4));
+        positions.forEach((node, pos) {
+          var d = codes[node]!.codeUnitAt(s) - 0x30;
+          if (k == 1) d = (d + 1) % 3; // middle still: wrong colour
+          final c = Base3Codec.colorForDigit(d);
+          img.fillCircle(im,
+              x: pos.dx.round(),
+              y: pos.dy.round(),
+              radius: 4,
+              color: img.ColorRgb8(c.r, c.g, c.b));
+        });
+        frames.add(im);
+      }
+    }
+
+    final points =
+        const Base3Scanner().decodeImages(frames, null, numPixels, repeats).points;
+    for (final node in positions.keys) {
+      expect(points[node].detected, isTrue, reason: 'node $node');
+    }
+  });
+
   test('decodes a bloomed pixel: white-clipped core with a coloured halo', () {
     // Bright LEDs photographed close up clip to white at the centre; only the
     // halo carries the hue. The colour vote must come from the halo.
