@@ -215,7 +215,7 @@ class Base3Scanner {
           for (var fi = 0; fi < frames.length; fi++)
             () {
               final s = fields[fi].at(b.cx.round(), b.cy.round());
-              return _dominantDigit(frames[fi], b, w, s[0], s[1]);
+              return _dominantDigit(frames[fi], b, w, s[0], s[1], reference);
             }()
         ]
     ];
@@ -402,25 +402,42 @@ class Base3Scanner {
   /// per-pixel minimum — which discards the white/grey component, so a centre
   /// blown out to white still reads (its coloured edge votes) and the camera's
   /// auto white-balance tinting the frame doesn't fool it.
-  int _dominantDigit(img.Image f, _Blob b, int w, int sx, int sy) {
+  int _dominantDigit(
+      img.Image f, _Blob b, int w, int sx, int sy, img.Image? ref) {
     var vr = 0, vg = 0, vb = 0;
     for (final idx in b.pixels) {
-      final x = idx % w + sx, y = idx ~/ w + sy;
+      final bx = idx % w, by = idx ~/ w; // frame-0 (reference) coords
+      final x = bx + sx, y = by + sy; // this frame's registered position
       if (x < 0 || y < 0 || x >= f.width || y >= f.height) continue;
       final px = f.getPixel(x, y);
-      final r = px.r.toInt();
-      final g = px.g.toInt();
-      final b0 = px.b.toInt();
-      final m = min(r, min(g, b0)); // white/grey/ambient component
+      var r = px.r.toInt();
+      var g = px.g.toInt();
+      var b0 = px.b.toInt();
+      // Subtract the black reference per channel to remove the camera's ambient
+      // colour cast / baseline, leaving the LED's own contribution.
+      if (ref != null && bx < ref.width && by < ref.height) {
+        final rp = ref.getPixel(bx, by);
+        r -= rp.r.toInt();
+        g -= rp.g.toInt();
+        b0 -= rp.b.toInt();
+        if (r < 0) r = 0;
+        if (g < 0) g = 0;
+        if (b0 < 0) b0 = 0;
+      }
+      final m = min(r, min(g, b0)); // white/grey residual
       final cr = r - m, cg = g - m, cb = b0 - m; // chroma per channel
       final topc = max(cr, max(cg, cb));
       if (topc < chromaFloor) continue; // colourless -> no vote
+      // Weight by brightness so the LED's bright core outvotes dim edge pixels
+      // that may bleed a neighbour's colour.
+      final wgt = 1 + max(r, max(g, b0));
+      final vote = (topc * wgt).toInt();
       if (topc == cr) {
-        vr += cr;
+        vr += vote;
       } else if (topc == cg) {
-        vg += cg;
+        vg += vote;
       } else {
-        vb += cb;
+        vb += vote;
       }
     }
     final top = max(vr, max(vg, vb));
