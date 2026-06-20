@@ -1,6 +1,6 @@
 import 'dart:math';
 import 'dart:typed_data';
-import 'dart:ui' show Offset;
+import 'dart:ui' show Offset, Rect;
 
 import 'package:image/image.dart' as img;
 
@@ -125,6 +125,9 @@ class Base3Scanner {
     Uint8List? referenceBytes,
     int numPixels, [
     int framesPerState = 1,
+    Rect? roi,
+    bool maskAmbient = false,
+    int maskThreshold = 60,
   ]) {
     final frames = <img.Image>[];
     for (final b in frameBytes) {
@@ -144,17 +147,23 @@ class Base3Scanner {
         ref = img.copyResize(r, width: frames[0].width, height: frames[0].height);
       }
     }
-    return decodeImages(frames, ref, numPixels, framesPerState);
+    return decodeImages(
+        frames, ref, numPixels, framesPerState, roi, maskAmbient, maskThreshold);
   }
 
   /// Core decode on already-decoded frames. Exposed for unit testing.
   /// [framesPerState] stills were captured per base-3 frame; each LED's colour
   /// for a frame is the majority vote across those stills (rejects bad frames).
+  /// [roi] (normalized 0..1) restricts detection to a region; [maskAmbient]
+  /// drops pixels that are bright in the off/reference frame (ambient noise).
   Base3ScanResult decodeImages(
     List<img.Image> frames,
     img.Image? reference,
     int numPixels, [
     int framesPerState = 1,
+    Rect? roi,
+    bool maskAmbient = false,
+    int maskThreshold = 60,
   ]) {
     final points =
         List.generate(numPixels, (i) => DetectedPoint(nodeIndex: i));
@@ -169,6 +178,12 @@ class Base3Scanner {
     //    later frames and the colour sequence is garbage.
     final fields = _estimateShiftFields(frames, w, h);
 
+    // Region of interest (pixel bounds); detection happens only inside it.
+    final rx0 = roi == null ? 0 : (roi.left * w).round().clamp(0, w);
+    final ry0 = roi == null ? 0 : (roi.top * h).round().clamp(0, h);
+    final rx1 = roi == null ? w : (roi.right * w).round().clamp(0, w);
+    final ry1 = roi == null ? h : (roi.bottom * h).round().clamp(0, h);
+
     // 1. Aligned max-projection of the max-channel signal across all frames
     //    (every pixel is lit in every frame, so this surfaces them all), minus
     //    ambient. Each frame is sampled at its registered offset.
@@ -176,8 +191,8 @@ class Base3Scanner {
     for (var fi = 0; fi < frames.length; fi++) {
       final f = frames[fi];
       final field = fields[fi];
-      for (var y = 0; y < h; y++) {
-        for (var x = 0; x < w; x++) {
+      for (var y = ry0; y < ry1; y++) {
+        for (var x = rx0; x < rx1; x++) {
           final xi = x + field.blockDx(x, y);
           final yi = y + field.blockDy(x, y);
           if (xi < 0 || yi < 0 || xi >= w || yi >= h) continue;
@@ -188,10 +203,16 @@ class Base3Scanner {
       }
     }
     if (reference != null) {
-      for (var y = 0; y < h; y++) {
-        for (var x = 0; x < w; x++) {
+      for (var y = ry0; y < ry1; y++) {
+        for (var x = rx0; x < rx1; x++) {
           final idx = y * w + x;
-          final s = signal[idx] - _maxChannel(reference.getPixel(x, y));
+          final amb = _maxChannel(reference.getPixel(x, y));
+          // Mask: drop anything bright when the LEDs were off (ambient/noise).
+          if (maskAmbient && amb >= maskThreshold) {
+            signal[idx] = 0;
+            continue;
+          }
+          final s = signal[idx] - amb;
           signal[idx] = s < 0 ? 0 : s;
         }
       }

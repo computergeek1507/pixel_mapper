@@ -113,6 +113,12 @@ class ScanController extends ChangeNotifier {
   /// raise resolution) rather than the decode failing.
   int? lastBlobsFound;
 
+  /// Restrict detection to this normalized (0..1) region; null = whole frame.
+  Rect? roi;
+
+  /// Drop pixels that are bright in the off/reference frame (ambient/noise).
+  bool maskAmbient = false;
+
   /// Most recent captured frame (for live preview) and the black reference.
   Uint8List? lastFrame;
   Uint8List? referenceFrame;
@@ -231,8 +237,10 @@ class ScanController extends ChangeNotifier {
 
     final refBytes = referenceFrame;
     final repeats = framesPerState < 1 ? 1 : framesPerState;
-    final result = await Isolate.run(() =>
-        const Base3Scanner().decodeBytes(frames, refBytes, numPixels, repeats));
+    final roiArg = roi;
+    final maskArg = maskAmbient;
+    final result = await Isolate.run(() => const Base3Scanner()
+        .decodeBytes(frames, refBytes, numPixels, repeats, roiArg, maskArg));
     lastBlobsFound = result.blobsFound;
     points
       ..clear()
@@ -264,7 +272,8 @@ class ScanController extends ChangeNotifier {
     await _settle();
     final frame = await camera.captureFrame();
     lastFrame = frame;
-    final spot = await detector.detect(frame, referenceBytes: referenceFrame);
+    final spot = await detector.detect(frame,
+        referenceBytes: referenceFrame, roi: roi, maskAmbient: maskAmbient);
     point.screenXY = spot != null ? Offset(spot.normX, spot.normY) : null;
     point.brightness = spot?.brightness ?? 0;
     point.manualEdited = false;

@@ -1,3 +1,5 @@
+import 'dart:ui' show Rect;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:pixel_mapper/services/bright_spot_detector.dart';
@@ -57,6 +59,39 @@ void main() {
       expect(spot, isNotNull, reason: 'bloomed LED should still be found');
       expect(spot!.normX, closeTo(150 / 320, 0.04));
       expect(spot.normY, closeTo(90 / 240, 0.04));
+    });
+
+    test('roi restricts detection to the region', () {
+      final frame = _frame(dots: [
+        (x: 40, y: 40, r: 6, v: 255), // brighter, but outside the ROI
+        (x: 250, y: 180, r: 6, v: 200), // dimmer, inside the ROI
+      ]);
+      final spot = ImageBrightSpotDetector.detectInImage(
+        frame,
+        roi: const Rect.fromLTRB(0.5, 0.5, 1.0, 1.0),
+      );
+      expect(spot, isNotNull);
+      expect(spot!.normX, closeTo(250 / 320, 0.06));
+      expect(spot.normY, closeTo(180 / 240, 0.06));
+    });
+
+    test('maskAmbient drops a source the subtraction misses', () {
+      // Source is dim in the off frame but flares brighter in the lit frame, so
+      // subtraction leaves a big residual that would beat the real LED — unless
+      // it's masked because it was lit in the off frame.
+      final reference = _frame(dots: [(x: 40, y: 40, r: 12, v: 100)]);
+      final frame = _frame(dots: [
+        (x: 40, y: 40, r: 12, v: 255), // flared-up source
+        (x: 250, y: 180, r: 5, v: 150), // the real LED
+      ]);
+      final spot = ImageBrightSpotDetector.detectInImage(
+        frame,
+        reference: reference,
+        maskAmbient: true,
+        maskThreshold: 60,
+      );
+      expect(spot, isNotNull);
+      expect(spot!.normX, closeTo(250 / 320, 0.06));
     });
 
     test('reference subtraction ignores a static ambient hotspot', () {

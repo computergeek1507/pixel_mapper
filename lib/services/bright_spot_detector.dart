@@ -1,5 +1,6 @@
 import 'dart:isolate';
 import 'dart:typed_data';
+import 'dart:ui' show Rect;
 
 import 'package:image/image.dart' as img;
 
@@ -33,7 +34,15 @@ abstract class BrightSpotDetector {
   /// Decodes [frameBytes] (PNG/JPEG) and returns the brightest blob, or null if
   /// nothing bright enough was found. When [referenceBytes] is given, a black
   /// reference frame is subtracted first to suppress ambient hotspots.
-  Future<BrightSpot?> detect(Uint8List frameBytes, {Uint8List? referenceBytes});
+  /// [roi] (normalized 0..1) restricts the search; [maskAmbient] drops pixels
+  /// that are bright in the reference (ambient/noise).
+  Future<BrightSpot?> detect(
+    Uint8List frameBytes, {
+    Uint8List? referenceBytes,
+    Rect? roi,
+    bool maskAmbient = false,
+    int maskThreshold = 60,
+  });
 }
 
 /// Pure-Dart detector built on the `image` package. No native dependencies, so
@@ -60,8 +69,13 @@ class ImageBrightSpotDetector implements BrightSpotDetector {
   });
 
   @override
-  Future<BrightSpot?> detect(Uint8List frameBytes,
-      {Uint8List? referenceBytes}) async {
+  Future<BrightSpot?> detect(
+    Uint8List frameBytes, {
+    Uint8List? referenceBytes,
+    Rect? roi,
+    bool maskAmbient = false,
+    int maskThreshold = 60,
+  }) async {
     // Copy params to locals so the isolate closure doesn't capture `this`.
     final minB = minBrightness;
     final rel = relativeThreshold;
@@ -91,6 +105,9 @@ class ImageBrightSpotDetector implements BrightSpotDetector {
         minBrightness: minB,
         relativeThreshold: rel,
         maxAreaFraction: maxA,
+        roi: roi,
+        maskAmbient: maskAmbient,
+        maskThreshold: maskThreshold,
       );
     });
   }
@@ -109,21 +126,32 @@ class ImageBrightSpotDetector implements BrightSpotDetector {
     int minBrightness = 40,
     double relativeThreshold = 0.85,
     double maxAreaFraction = 0.25,
+    Rect? roi,
+    bool maskAmbient = false,
+    int maskThreshold = 60,
   }) {
     final w = frame.width;
     final h = frame.height;
     if (w == 0 || h == 0) return null;
 
+    // Region of interest (pixel bounds); search only inside it.
+    final rx0 = roi == null ? 0 : (roi.left * w).round().clamp(0, w);
+    final ry0 = roi == null ? 0 : (roi.top * h).round().clamp(0, h);
+    final rx1 = roi == null ? w : (roi.right * w).round().clamp(0, w);
+    final ry1 = roi == null ? h : (roi.bottom * h).round().clamp(0, h);
+
     int signal(int x, int y) {
-      final s = _luma(frame, x, y) -
-          (reference != null ? _luma(reference, x, y) : 0);
+      final amb = reference != null ? _luma(reference, x, y) : 0;
+      // Mask: ignore anything bright when the LEDs were off (ambient/noise).
+      if (maskAmbient && amb >= maskThreshold) return 0;
+      final s = _luma(frame, x, y) - amb;
       return s < 0 ? 0 : s;
     }
 
     // Pass 1: find the peak signal.
     var peak = 0;
-    for (var y = 0; y < h; y++) {
-      for (var x = 0; x < w; x++) {
+    for (var y = ry0; y < ry1; y++) {
+      for (var x = rx0; x < rx1; x++) {
         final s = signal(x, y);
         if (s > peak) peak = s;
       }
@@ -142,8 +170,8 @@ class ImageBrightSpotDetector implements BrightSpotDetector {
       final threshold = peak * rel;
       double sumX = 0, sumY = 0, sumW = 0;
       var area = 0;
-      for (var y = 0; y < h; y++) {
-        for (var x = 0; x < w; x++) {
+      for (var y = ry0; y < ry1; y++) {
+        for (var x = rx0; x < rx1; x++) {
           final s = signal(x, y);
           if (s >= threshold) {
             sumX += x * s;

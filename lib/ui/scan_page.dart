@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -29,6 +31,8 @@ class _ScanPageState extends State<ScanPage> {
   late final ScanController _scan;
   bool _cameraReady = false;
   String? _cameraError;
+  Rect? _roi; // normalized 0..1, null = full frame
+  Offset? _dragStart;
 
   @override
   void initState() {
@@ -53,6 +57,18 @@ class _ScanPageState extends State<ScanPage> {
   }
 
   void _onChange() => setState(() {});
+
+  /// Normalized 0..1 rect from two drag points within a [box]-sized preview.
+  Rect _normRect(Offset a, Offset b, Size box) {
+    double nx(double v) => (v / box.width).clamp(0.0, 1.0);
+    double ny(double v) => (v / box.height).clamp(0.0, 1.0);
+    return Rect.fromLTRB(
+      min(nx(a.dx), nx(b.dx)),
+      min(ny(a.dy), ny(b.dy)),
+      max(nx(a.dx), nx(b.dx)),
+      max(ny(a.dy), ny(b.dy)),
+    );
+  }
 
   @override
   void dispose() {
@@ -90,17 +106,45 @@ class _ScanPageState extends State<ScanPage> {
                             style: const TextStyle(color: Colors.white)),
                       ),
                     )
-                  : Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        if (_cameraReady) widget.camera.buildPreview(),
-                        CustomPaint(
-                          painter: LayoutPainter(
-                            LayoutPainter.fromDetected(_scan.points),
-                          ),
+                  : LayoutBuilder(builder: (context, constraints) {
+                      final box = constraints.biggest;
+                      return GestureDetector(
+                        onPanStart: running
+                            ? null
+                            : (d) => _dragStart = d.localPosition,
+                        onPanUpdate: running
+                            ? null
+                            : (d) {
+                                if (_dragStart == null) return;
+                                setState(() => _roi = _normRect(
+                                    _dragStart!, d.localPosition, box));
+                              },
+                        onPanEnd: running
+                            ? null
+                            : (_) {
+                                _dragStart = null;
+                                // Ignore tiny accidental drags.
+                                if (_roi != null &&
+                                    (_roi!.width < 0.05 ||
+                                        _roi!.height < 0.05)) {
+                                  setState(() => _roi = null);
+                                }
+                                _scan.roi = _roi;
+                              },
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            if (_cameraReady) widget.camera.buildPreview(),
+                            CustomPaint(
+                              painter: LayoutPainter(
+                                LayoutPainter.fromDetected(_scan.points),
+                              ),
+                            ),
+                            CustomPaint(painter: _RoiPainter(_roi)),
+                          ],
                         ),
-                      ],
-                    ),
+                      );
+                    }),
             ),
           ),
           Padding(
@@ -169,6 +213,42 @@ class _ScanPageState extends State<ScanPage> {
                       ? null
                       : (v) => _scan.setFraming(v),
                 ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  secondary: const Icon(Icons.filter_alt_outlined),
+                  title: const Text('Mask ambient light'),
+                  subtitle:
+                      const Text('Ignore anything lit in the off frame'),
+                  value: _scan.maskAmbient,
+                  onChanged: running
+                      ? null
+                      : (v) => setState(() => _scan.maskAmbient = v),
+                ),
+                Row(
+                  children: [
+                    const Icon(Icons.crop_free, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _roi == null
+                            ? 'ROI: full frame — drag on the preview to set'
+                            : 'ROI set — only this region is scanned',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    if (_roi != null)
+                      TextButton(
+                        onPressed: running
+                            ? null
+                            : () => setState(() {
+                                  _roi = null;
+                                  _scan.roi = null;
+                                }),
+                        child: const Text('Clear'),
+                      ),
+                  ],
+                ),
                 Row(
                   children: [
                     Expanded(
@@ -224,4 +304,33 @@ class _ScanPageState extends State<ScanPage> {
         return '';
     }
   }
+}
+
+/// Draws the region-of-interest rectangle over the preview and dims outside it.
+class _RoiPainter extends CustomPainter {
+  final Rect? roi; // normalized 0..1
+  _RoiPainter(this.roi);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final r = roi;
+    if (r == null) return;
+    final rect = Rect.fromLTRB(r.left * size.width, r.top * size.height,
+        r.right * size.width, r.bottom * size.height);
+    final dim = Path()
+      ..addRect(Offset.zero & size)
+      ..addRect(rect)
+      ..fillType = PathFillType.evenOdd;
+    canvas.drawPath(dim, Paint()..color = Colors.black.withValues(alpha: 0.45));
+    canvas.drawRect(
+      rect,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..color = Colors.orangeAccent
+        ..strokeWidth = 2,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _RoiPainter old) => old.roi != roi;
 }
