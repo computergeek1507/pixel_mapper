@@ -112,6 +112,14 @@ class RtspCameraSource implements CameraSource {
   }
 
   @override
+  double get previewAspectRatio {
+    final w = _player?.state.width ?? 0;
+    final h = _player?.state.height ?? 0;
+    if (w > 0 && h > 0) return w / h;
+    return 16 / 9;
+  }
+
+  @override
   Widget buildPreview() {
     final controller = _videoController;
     if (controller == null) return const ColoredBox(color: Colors.black);

@@ -29,6 +29,10 @@ abstract class CameraSource {
   /// Live preview widget. Returns a black box if not yet initialized.
   Widget buildPreview();
 
+  /// Preview aspect ratio (width / height) so the UI can size the preview and
+  /// any overlays/ROI to match the image (no letterbox-induced misalignment).
+  double get previewAspectRatio => 16 / 9;
+
   /// Resumes the live preview after a still-capture burst. Some platforms
   /// (notably Android) leave the preview paused after `takePicture`, which makes
   /// framing impossible once a scan has run. No-op where not applicable.

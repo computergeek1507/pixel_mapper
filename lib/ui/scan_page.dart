@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/target_config.dart';
@@ -43,7 +44,41 @@ class _ScanPageState extends State<ScanPage> {
     _scan = ScanController(
         config: widget.config, camera: widget.camera, mode: widget.mode);
     _scan.addListener(_onChange);
+    _loadScanSettings();
     _initCamera();
+  }
+
+  /// Restores the last scan settings (settle, brightness, mask, stabilize, ROI).
+  Future<void> _loadScanSettings() async {
+    final p = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _scan.settleDelayMs = p.getInt('scanSettleMs') ?? _scan.settleDelayMs;
+      _scan.ledBrightness = p.getDouble('scanBrightness') ?? _scan.ledBrightness;
+      _scan.maskAmbient = p.getBool('scanMask') ?? _scan.maskAmbient;
+      _scan.stabilize = p.getBool('scanStabilize') ?? _scan.stabilize;
+      if (p.getBool('roiSet') ?? false) {
+        _roi = Rect.fromLTRB(p.getDouble('roiL') ?? 0, p.getDouble('roiT') ?? 0,
+            p.getDouble('roiR') ?? 1, p.getDouble('roiB') ?? 1);
+        _scan.roi = _roi;
+      }
+    });
+  }
+
+  Future<void> _saveScanSettings() async {
+    final p = await SharedPreferences.getInstance();
+    await p.setInt('scanSettleMs', _scan.settleDelayMs);
+    await p.setDouble('scanBrightness', _scan.ledBrightness);
+    await p.setBool('scanMask', _scan.maskAmbient);
+    await p.setBool('scanStabilize', _scan.stabilize);
+    final r = _roi;
+    await p.setBool('roiSet', r != null);
+    if (r != null) {
+      await p.setDouble('roiL', r.left);
+      await p.setDouble('roiT', r.top);
+      await p.setDouble('roiR', r.right);
+      await p.setDouble('roiB', r.bottom);
+    }
   }
 
   Future<void> _initCamera() async {
@@ -72,6 +107,7 @@ class _ScanPageState extends State<ScanPage> {
 
   @override
   void dispose() {
+    _saveScanSettings();
     WakelockPlus.disable();
     _scan.removeListener(_onChange);
     _scan.close();
@@ -106,7 +142,12 @@ class _ScanPageState extends State<ScanPage> {
                             style: const TextStyle(color: Colors.white)),
                       ),
                     )
-                  : LayoutBuilder(builder: (context, constraints) {
+                  : Center(
+                      child: AspectRatio(
+                        aspectRatio: _cameraReady
+                            ? widget.camera.previewAspectRatio
+                            : 16 / 9,
+                        child: LayoutBuilder(builder: (context, constraints) {
                       final box = constraints.biggest;
                       return GestureDetector(
                         onPanStart: running
@@ -145,6 +186,8 @@ class _ScanPageState extends State<ScanPage> {
                         ),
                       );
                     }),
+                      ),
+                    ),
             ),
           ),
           Padding(
@@ -268,7 +311,10 @@ class _ScanPageState extends State<ScanPage> {
                       child: FilledButton.icon(
                         onPressed: (!_cameraReady || running)
                             ? null
-                            : () => _scan.start(),
+                            : () {
+                                _saveScanSettings();
+                                _scan.start();
+                              },
                         icon: const Icon(Icons.play_arrow),
                         label: const Text('Start scan'),
                       ),

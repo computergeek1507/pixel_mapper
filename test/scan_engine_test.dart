@@ -66,6 +66,9 @@ class _FakeCamera implements CameraSource {
   Future<void> resumePreview() async {}
 
   @override
+  double get previewAspectRatio => 4 / 3;
+
+  @override
   Future<Uint8List> captureFrame() async {
     final im = img.Image(width: 320, height: 240);
     img.fill(im, color: img.ColorRgb8(6, 6, 6)); // ambient

@@ -113,6 +113,13 @@ class CameraPackageSource implements CameraSource {
   }
 
   @override
+  double get previewAspectRatio {
+    final c = _controller;
+    if (c != null && c.value.isInitialized) return c.value.aspectRatio;
+    return 16 / 9;
+  }
+
+  @override
   Widget buildPreview() {
     final c = _controller;
     if (c == null || !c.value.isInitialized) {
