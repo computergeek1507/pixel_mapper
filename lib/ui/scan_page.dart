@@ -170,10 +170,10 @@ class _ScanPageState extends State<ScanPage> {
                     const Text('Settle'),
                     Expanded(
                       child: Slider(
-                        value: _scan.settleDelayMs.toDouble(),
+                        value: _scan.settleDelayMs.toDouble().clamp(0, 2000),
                         min: 0,
-                        max: 300,
-                        divisions: 30,
+                        max: 2000,
+                        divisions: 40,
                         label: '${_scan.settleDelayMs} ms',
                         onChanged: running
                             ? null
@@ -225,6 +225,19 @@ class _ScanPageState extends State<ScanPage> {
                       ? null
                       : (v) => setState(() => _scan.maskAmbient = v),
                 ),
+                if (widget.mode == ScanMode.fastBase3)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    secondary: const Icon(Icons.center_focus_strong_outlined),
+                    title: const Text('Stabilize (handheld)'),
+                    subtitle: const Text(
+                        'Turn off for a mounted/tripod camera'),
+                    value: _scan.stabilize,
+                    onChanged: running
+                        ? null
+                        : (v) => setState(() => _scan.stabilize = v),
+                  ),
                 Row(
                   children: [
                     const Icon(Icons.crop_free, size: 18),

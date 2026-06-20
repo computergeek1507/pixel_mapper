@@ -128,6 +128,7 @@ class Base3Scanner {
     Rect? roi,
     bool maskAmbient = false,
     int maskThreshold = 60,
+    bool register = true,
   ]) {
     final frames = <img.Image>[];
     for (final b in frameBytes) {
@@ -147,8 +148,8 @@ class Base3Scanner {
         ref = img.copyResize(r, width: frames[0].width, height: frames[0].height);
       }
     }
-    return decodeImages(
-        frames, ref, numPixels, framesPerState, roi, maskAmbient, maskThreshold);
+    return decodeImages(frames, ref, numPixels, framesPerState, roi,
+        maskAmbient, maskThreshold, register);
   }
 
   /// Core decode on already-decoded frames. Exposed for unit testing.
@@ -164,6 +165,7 @@ class Base3Scanner {
     Rect? roi,
     bool maskAmbient = false,
     int maskThreshold = 60,
+    bool register = true,
   ]) {
     final points =
         List.generate(numPixels, (i) => DetectedPoint(nodeIndex: i));
@@ -175,8 +177,16 @@ class Base3Scanner {
     // 0. Register frames: the camera drifts between the sequential photos
     //    (handheld), so estimate each frame's pixel shift relative to frame 0.
     //    Without this, a fixed read position lands on a neighbouring LED in
-    //    later frames and the colour sequence is garbage.
-    final fields = _estimateShiftFields(frames, w, h);
+    //    later frames and the colour sequence is garbage. Skipped for a mounted
+    //    camera (registration of a refocusing webcam can ghost each LED).
+    final fields = register
+        ? _estimateShiftFields(frames, w, h)
+        : [
+            for (var i = 0; i < frames.length; i++)
+              _ShiftField(registerGrid, w, h,
+                  List.filled(registerGrid * registerGrid, 0),
+                  List.filled(registerGrid * registerGrid, 0))
+          ];
 
     // Region of interest (pixel bounds); detection happens only inside it.
     final rx0 = roi == null ? 0 : (roi.left * w).round().clamp(0, w);

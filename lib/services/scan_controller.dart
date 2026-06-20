@@ -119,6 +119,10 @@ class ScanController extends ChangeNotifier {
   /// Drop pixels that are bright in the off/reference frame (ambient/noise).
   bool maskAmbient = false;
 
+  /// Frame registration for the fast scan. On for handheld; turn off for a
+  /// mounted camera (registering a refocusing webcam can ghost each LED).
+  bool stabilize = true;
+
   /// Most recent captured frame (for live preview) and the black reference.
   Uint8List? lastFrame;
   Uint8List? referenceFrame;
@@ -239,8 +243,9 @@ class ScanController extends ChangeNotifier {
     final repeats = framesPerState < 1 ? 1 : framesPerState;
     final roiArg = roi;
     final maskArg = maskAmbient;
-    final result = await Isolate.run(() => const Base3Scanner()
-        .decodeBytes(frames, refBytes, numPixels, repeats, roiArg, maskArg));
+    final registerArg = stabilize;
+    final result = await Isolate.run(() => const Base3Scanner().decodeBytes(
+        frames, refBytes, numPixels, repeats, roiArg, maskArg, 60, registerArg));
     lastBlobsFound = result.blobsFound;
     points
       ..clear()
