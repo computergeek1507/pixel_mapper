@@ -281,6 +281,18 @@ class _ScanPageState extends State<ScanPage> {
                         ? null
                         : (v) => setState(() => _scan.stabilize = v),
                   ),
+                if (widget.mode == ScanMode.fastBase3)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    secondary: const Icon(Icons.save_alt),
+                    title: const Text('Save frames (debug)'),
+                    subtitle: const Text('Save captures for decoder tuning'),
+                    value: _scan.saveCaptures,
+                    onChanged: running
+                        ? null
+                        : (v) => setState(() => _scan.saveCaptures = v),
+                  ),
                 Row(
                   children: [
                     const Icon(Icons.crop_free, size: 18),

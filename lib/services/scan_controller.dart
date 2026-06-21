@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../models/detected_point.dart';
 import '../models/pixel_color.dart';
@@ -123,6 +125,10 @@ class ScanController extends ChangeNotifier {
   /// mounted camera (registering a refocusing webcam can ghost each LED).
   bool stabilize = true;
 
+  /// Debug: save the captured fast-scan frames to `appSupport/captures` so the
+  /// decoder can be tuned offline against real data.
+  bool saveCaptures = false;
+
   /// Most recent captured frame (for live preview) and the black reference.
   Uint8List? lastFrame;
   Uint8List? referenceFrame;
@@ -177,6 +183,23 @@ class ScanController extends ChangeNotifier {
 
   /// Lights the whole prop and holds, letting the live preview drive the
   /// camera's auto focus/exposure to settle on the lit scene before capture.
+  /// Writes the reference + all captured fast-scan frames to disk for offline
+  /// decoder tuning. Names encode the grouping (`f_frame_still.png`).
+  Future<void> _saveCaptures(
+      Uint8List? ref, List<Uint8List> frames, int repeats) async {
+    try {
+      final base = await getApplicationSupportDirectory();
+      final dir = Directory('${base.path}/captures');
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
+      dir.createSync(recursive: true);
+      if (ref != null) File('${dir.path}/ref.png').writeAsBytesSync(ref);
+      for (var i = 0; i < frames.length; i++) {
+        final s = i ~/ repeats, k = i % repeats;
+        File('${dir.path}/f_${s}_$k.png').writeAsBytesSync(frames[i]);
+      }
+    } catch (_) {}
+  }
+
   Future<void> _warmUp() async {
     if (warmupMs <= 0) return;
     output.setAll(PixelColor.white);
@@ -238,6 +261,8 @@ class ScanController extends ChangeNotifier {
       currentIndex = i;
       notifyListeners();
     }
+
+    if (saveCaptures) await _saveCaptures(referenceFrame, frames, framesPerState);
 
     final refBytes = referenceFrame;
     final repeats = framesPerState < 1 ? 1 : framesPerState;

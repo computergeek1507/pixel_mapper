@@ -7,15 +7,15 @@ import 'package:image/image.dart' as img;
 import '../models/detected_point.dart';
 import 'base3_codec.dart';
 
-/// One detected bright region (an LED, or a cluster of touching LEDs). Holds the
-/// pixel indices that make it up so colour can be read over exactly those
-/// pixels — no background, no neighbouring LED.
+/// One detected LED: a brightness peak. [reach] is how far to sample colour
+/// around it (capped so touching neighbours don't bleed in); [bright] is the
+/// peak signal (used to keep the strongest of duplicate decodes).
 class _Blob {
-  final double cx;
-  final double cy;
-  final List<int> pixels; // indices into the w*h signal map
-  _Blob(this.cx, this.cy, this.pixels);
-  int get area => pixels.length;
+  final int cx;
+  final int cy;
+  int reach;
+  final int bright;
+  _Blob(this.cx, this.cy, this.reach, this.bright);
 }
 
 class _Candidate {
@@ -78,9 +78,21 @@ class Base3Scanner {
   /// Detection signal (max RGB channel, ambient-subtracted) threshold.
   final int detectThreshold;
 
-  /// Minimum connected-component area (analyzed px) to count as an LED, so
-  /// sensor speckle doesn't register as a pixel.
-  final int minBlobArea;
+  /// Box-blur radius applied to the signal before peak-finding, so each LED is
+  /// one smooth bump (one peak) instead of many noisy maxima.
+  final int blurRadius;
+
+  /// A pixel is a peak candidate if no neighbour within this radius is brighter.
+  final int peakWindow;
+
+  /// Minimum spacing (analyzed px) between accepted peaks (non-max suppression)
+  /// — roughly the LED pitch, so touching LEDs stay distinct.
+  final int peakMinSep;
+
+  /// Half-size of the colour-sampling window around a peak (capped at half the
+  /// distance to the nearest neighbour so colours don't bleed across LEDs).
+  final int sampleRadius;
+  final int maxColorReach;
 
   /// Minimum per-pixel chroma (dominant channel minus the channel minimum) for
   /// a sample to vote on the colour. Filters out white/grey bloom and ambient
@@ -105,10 +117,21 @@ class Base3Scanner {
   /// just translation — is compensated.
   final int registerGrid;
 
+  /// Codeword-match tolerance: max cost (erasure=1, substitution=2) and the
+  /// minimum margin over the runner-up codeword to accept a match.
+  final int matchMaxCost;
+  final int matchMargin;
+
   const Base3Scanner({
     this.detectThreshold = 50,
-    this.minBlobArea = 3,
-    this.chromaFloor = 6,
+    this.blurRadius = 1,
+    this.peakWindow = 2,
+    this.peakMinSep = 2,
+    this.sampleRadius = 2,
+    this.maxColorReach = 8,
+    this.chromaFloor = 4,
+    this.matchMaxCost = 4,
+    this.matchMargin = 2,
     // 1.0 = trust the dominant chroma channel (only erase a truly colourless
     // frame). Real R/G/B LEDs often read with a strong secondary channel
     // (e.g. orange-ish red), so a higher ratio erased correct reads.
@@ -228,10 +251,9 @@ class Base3Scanner {
       }
     }
 
-    // 2. Connected components of the bright mask -> one blob per LED (or per
-    //    touching cluster). Robust to in-LED sensor noise, which would shatter
-    //    a peak-based detector.
-    final blobs = _connectedComponents(signal, w, h);
+    // 2. Find one peak per LED. Connected components would merge touching LEDs
+    //    (dense props), so blur to denoise then take local maxima.
+    final blobs = _findPeaks(signal, w, h, rx0, ry0, rx1, ry1);
 
     // The valid codewords, regenerated exactly as the scan side drove them, as
     // digit lists. Decoding by nearest codeword (with erasures) lets a blob
@@ -247,7 +269,7 @@ class Base3Scanner {
     final repeats = framesPerState < 1 ? 1 : framesPerState;
     final reads = [
       for (final b in blobs)
-        _blobRead(b, frames, fields, w, reference, bits, repeats)
+        _blobRead(b, frames, fields, signal, w, reference, bits, repeats)
     ];
 
     // Auto-detect colour order: the camera sees R/G/B permuted if the LEDs use a
@@ -279,13 +301,13 @@ class Base3Scanner {
       }
     }
 
-    // Keep the largest blob per decoded pixel.
+    // Keep the brightest peak per decoded pixel.
     final best = <int, _Candidate>{};
     for (var bi = 0; bi < blobs.length; bi++) {
       final pixel = bestPixels[bi];
       if (pixel < 1 || pixel > numPixels) continue;
       final b = blobs[bi];
-      final cand = _Candidate(b.cx / w, b.cy / h, b.area);
+      final cand = _Candidate(b.cx / w, b.cy / h, b.bright);
       final prev = best[pixel];
       if (prev == null || cand.area > prev.area) best[pixel] = cand;
     }
@@ -436,16 +458,15 @@ class Base3Scanner {
   /// is the majority vote across its [repeats] stills (ties / all-unreadable ->
   /// -1 erasure), so a single bad still doesn't corrupt the read.
   List<int> _blobRead(_Blob b, List<img.Image> frames, List<_ShiftField> fields,
-      int w, img.Image? ref, int bits, int repeats) {
-    final cx = b.cx.round(), cy = b.cy.round();
+      Uint8List signal, int w, img.Image? ref, int bits, int repeats) {
     final read = List<int>.filled(bits, -1);
     for (var s = 0; s < bits; s++) {
       var c0 = 0, c1 = 0, c2 = 0;
       for (var k = 0; k < repeats; k++) {
         final fi = s * repeats + k;
         if (fi >= frames.length) break;
-        final sh = fields[fi].at(cx, cy);
-        final d = _dominantDigit(frames[fi], b, w, sh[0], sh[1], ref);
+        final sh = fields[fi].at(b.cx, b.cy);
+        final d = _dominantDigit(frames[fi], b, signal, w, sh[0], sh[1], ref);
         if (d == 0) {
           c0++;
         } else if (d == 1) {
@@ -464,14 +485,19 @@ class Base3Scanner {
     return read;
   }
 
-  int _dominantDigit(
-      img.Image f, _Blob b, int w, int sx, int sy, img.Image? ref) {
+  int _dominantDigit(img.Image f, _Blob b, Uint8List signal, int w, int sx,
+      int sy, img.Image? ref) {
     var vr = 0, vg = 0, vb = 0;
-    for (final idx in b.pixels) {
-      final bx = idx % w, by = idx ~/ w; // frame-0 (reference) coords
-      final x = bx + sx, y = by + sy; // this frame's registered position
-      if (x < 0 || y < 0 || x >= f.width || y >= f.height) continue;
-      final px = f.getPixel(x, y);
+    final reach = b.reach;
+    for (var dy = -reach; dy <= reach; dy++) {
+      for (var dx = -reach; dx <= reach; dx++) {
+        final bx = b.cx + dx, by = b.cy + dy; // reference coords
+        if (bx < 0 || by < 0 || bx >= w || by >= signal.length ~/ w) continue;
+        // Only sample LED pixels (bright in the max-projection), not background.
+        if (signal[by * w + bx] < detectThreshold) continue;
+        final x = bx + sx, y = by + sy; // this frame's registered position
+        if (x < 0 || y < 0 || x >= f.width || y >= f.height) continue;
+        final px = f.getPixel(x, y);
       var r = px.r.toInt();
       var g = px.g.toInt();
       var b0 = px.b.toInt();
@@ -501,6 +527,7 @@ class Base3Scanner {
       } else {
         vb += vote;
       }
+      }
     }
     final top = max(vr, max(vg, vb));
     if (top <= 0) return -1; // nothing colourful enough to classify
@@ -522,8 +549,8 @@ class Base3Scanner {
   int _matchCodeword(List<int> read, List<List<int>> codes) {
     const erasureCost = 1;
     const substitutionCost = 2;
-    const maxAcceptCost = 3; // e.g. 1 substitution + 1 erasure, or 3 erasures
-    const minMargin = 2; // runner-up must be clearly worse
+    final maxAcceptCost = matchMaxCost; // budget of erasures/substitutions
+    final minMargin = matchMargin; // runner-up must be clearly worse
 
     var bestCost = 1 << 30, secondCost = 1 << 30, bestPixel = -1;
     final n = read.length;
@@ -553,44 +580,87 @@ class Base3Scanner {
     return bestPixel;
   }
 
-  /// BFS connected-component labeling over the thresholded signal, collecting
-  /// each component's pixels and intensity-weighted centroid.
-  List<_Blob> _connectedComponents(Uint8List signal, int w, int h) {
-    final visited = Uint8List(w * h);
-    final blobs = <_Blob>[];
-    final queue = <int>[];
-    for (var start = 0; start < signal.length; start++) {
-      if (visited[start] == 1 || signal[start] < detectThreshold) continue;
-      visited[start] = 1;
-      queue
-        ..clear()
-        ..add(start);
-      final pixels = <int>[];
-      double sumX = 0, sumY = 0, sumW = 0;
-      while (queue.isNotEmpty) {
-        final idx = queue.removeLast();
-        final x = idx % w, y = idx ~/ w;
-        final s = signal[idx];
-        pixels.add(idx);
-        sumX += x * s;
-        sumY += y * s;
-        sumW += s;
-        for (var dy = -1; dy <= 1; dy++) {
-          for (var dx = -1; dx <= 1; dx++) {
-            if (dx == 0 && dy == 0) continue;
-            final nx = x + dx, ny = y + dy;
-            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-            final nidx = ny * w + nx;
-            if (visited[nidx] == 1 || signal[nidx] < detectThreshold) continue;
-            visited[nidx] = 1;
-            queue.add(nidx);
+  /// Square box blur of [r] over the signal, to denoise before peak-finding.
+  Uint8List _boxBlur(Uint8List src, int w, int h, int r) {
+    if (r <= 0) return src;
+    final out = Uint8List(w * h);
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var sum = 0, cnt = 0;
+        for (var dy = -r; dy <= r; dy++) {
+          final ny = y + dy;
+          if (ny < 0 || ny >= h) continue;
+          for (var dx = -r; dx <= r; dx++) {
+            final nx = x + dx;
+            if (nx < 0 || nx >= w) continue;
+            sum += src[ny * w + nx];
+            cnt++;
           }
         }
-      }
-      if (pixels.length >= minBlobArea && sumW > 0) {
-        blobs.add(_Blob(sumX / sumW, sumY / sumW, pixels));
+        out[y * w + x] = (sum / cnt).round();
       }
     }
-    return blobs;
+    return out;
+  }
+
+  /// Finds one peak per LED: blur the signal, take local maxima above the
+  /// threshold, suppress ones closer than [peakMinSep], and cap each peak's
+  /// colour reach at half the distance to its nearest neighbour. Separates
+  /// touching LEDs that connected components would merge.
+  List<_Blob> _findPeaks(
+      Uint8List signal, int w, int h, int rx0, int ry0, int rx1, int ry1) {
+    final smooth = _boxBlur(signal, w, h, blurRadius);
+
+    // Local-max candidates (no neighbour in peakWindow is brighter), brightest
+    // first.
+    final cand = <int>[];
+    for (var y = ry0; y < ry1; y++) {
+      for (var x = rx0; x < rx1; x++) {
+        if (signal[y * w + x] < detectThreshold) continue;
+        final s = smooth[y * w + x];
+        var isMax = true;
+        for (var dy = -peakWindow; dy <= peakWindow && isMax; dy++) {
+          for (var dx = -peakWindow; dx <= peakWindow; dx++) {
+            final nx = x + dx, ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            if (smooth[ny * w + nx] > s) {
+              isMax = false;
+              break;
+            }
+          }
+        }
+        if (isMax) cand.add(y * w + x);
+      }
+    }
+    cand.sort((a, b) => smooth[b] - smooth[a]);
+
+    // Greedy non-max suppression by minimum separation.
+    final peaks = <_Blob>[];
+    final sep2 = peakMinSep * peakMinSep;
+    for (final idx in cand) {
+      final x = idx % w, y = idx ~/ w;
+      var ok = true;
+      for (final p in peaks) {
+        final ddx = p.cx - x, ddy = p.cy - y;
+        if (ddx * ddx + ddy * ddy < sep2) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) peaks.add(_Blob(x, y, sampleRadius, signal[idx]));
+    }
+
+    // Reach = half the distance to the nearest other peak (clamped).
+    for (final p in peaks) {
+      var nearest = 1 << 30;
+      for (final o in peaks) {
+        if (identical(o, p)) continue;
+        final ddx = o.cx - p.cx, ddy = o.cy - p.cy;
+        final d2 = ddx * ddx + ddy * ddy;
+        if (d2 < nearest) nearest = d2;
+      }
+      p.reach = (sqrt(nearest) / 2).floor().clamp(sampleRadius, maxColorReach);
+    }
+    return peaks;
   }
 }
