@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:path_provider/path_provider.dart';
@@ -30,15 +31,20 @@ Future<void> _log(String msg) async {
 class RtspCameraSource implements CameraSource {
   final String url;
 
+  /// Clockwise rotation applied to the preview and captured frames (0..3 = 0°,
+  /// 90°, 180°, 270°), for a camera mounted sideways/upside-down.
+  final int quarterTurns;
+
   Player? _player;
   VideoController? _videoController;
   StreamSubscription<String>? _errorSub;
 
-  RtspCameraSource(this.url);
+  RtspCameraSource(this.url, {this.quarterTurns = 0});
 
   /// Builds a source for a DirectShow device by friendly name (Windows).
-  factory RtspCameraSource.dshow(String deviceName) =>
-      RtspCameraSource('av://dshow:video=$deviceName');
+  factory RtspCameraSource.dshow(String deviceName, {int quarterTurns = 0}) =>
+      RtspCameraSource('av://dshow:video=$deviceName',
+          quarterTurns: quarterTurns);
 
   @override
   bool get isInitialized => _player != null;
@@ -103,6 +109,13 @@ class RtspCameraSource implements CameraSource {
       await _log('screenshot returned null for "$url"');
       throw StateError('Failed to grab a frame from "$url".');
     }
+    final turns = quarterTurns % 4;
+    if (turns != 0) {
+      final decoded = img.decodeImage(bytes);
+      if (decoded != null) {
+        return img.encodePng(img.copyRotate(decoded, angle: turns * 90));
+      }
+    }
     return bytes;
   }
 
@@ -115,15 +128,16 @@ class RtspCameraSource implements CameraSource {
   double get previewAspectRatio {
     final w = _player?.state.width ?? 0;
     final h = _player?.state.height ?? 0;
-    if (w > 0 && h > 0) return w / h;
-    return 16 / 9;
+    final base = (w > 0 && h > 0) ? w / h : 16 / 9;
+    return quarterTurns.isOdd ? 1 / base : base;
   }
 
   @override
   Widget buildPreview() {
     final controller = _videoController;
     if (controller == null) return const ColoredBox(color: Colors.black);
-    return Video(controller: controller);
+    return RotatedBox(
+        quarterTurns: quarterTurns, child: Video(controller: controller));
   }
 
   @override

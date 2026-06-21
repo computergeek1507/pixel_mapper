@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
 import 'camera_source.dart';
@@ -26,10 +27,14 @@ class CameraPackageSource implements CameraSource {
   final int cameraIndex;
   final ResolutionPreset resolution;
 
+  /// Clockwise rotation (0..3 = 0/90/180/270°) for a sideways/upside-down mount.
+  final int quarterTurns;
+
   CameraController? _controller;
 
   CameraPackageSource({
     this.cameraIndex = 0,
+    this.quarterTurns = 0,
     // `high` (≈720p) renders reliably; veryHigh/max made some back-camera
     // previews come up black on camera_android_camerax. Still plenty of detail
     // for the scan (we capture stills, not a low-res stream).
@@ -102,7 +107,15 @@ class CameraPackageSource implements CameraSource {
     final c = _controller;
     if (c == null) throw StateError('Camera not initialized.');
     final file = await c.takePicture();
-    return file.readAsBytes();
+    final bytes = await file.readAsBytes();
+    final turns = quarterTurns % 4;
+    if (turns != 0) {
+      final decoded = img.decodeImage(bytes);
+      if (decoded != null) {
+        return img.encodePng(img.copyRotate(decoded, angle: turns * 90));
+      }
+    }
+    return bytes;
   }
 
   @override
@@ -115,8 +128,9 @@ class CameraPackageSource implements CameraSource {
   @override
   double get previewAspectRatio {
     final c = _controller;
-    if (c != null && c.value.isInitialized) return c.value.aspectRatio;
-    return 16 / 9;
+    final base =
+        (c != null && c.value.isInitialized) ? c.value.aspectRatio : 16 / 9;
+    return quarterTurns.isOdd ? 1 / base : base;
   }
 
   @override
@@ -125,7 +139,7 @@ class CameraPackageSource implements CameraSource {
     if (c == null || !c.value.isInitialized) {
       return const ColoredBox(color: Colors.black);
     }
-    return CameraPreview(c);
+    return RotatedBox(quarterTurns: quarterTurns, child: CameraPreview(c));
   }
 
   @override

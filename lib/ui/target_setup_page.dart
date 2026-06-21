@@ -42,6 +42,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
   ScanMode _scanMode = ScanMode.fastBase3;
   List<CameraDescription> _cameras = const [];
   int _cameraIndex = 0;
+  int _cameraRotation = 0; // quarter turns (0/90/180/270°)
   PixelOutput? _output;
   bool _connecting = false;
   String? _status;
@@ -117,6 +118,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
       _useRtsp = p.getBool('useRtsp') ?? _useRtsp;
       _brightness = p.getDouble('brightness') ?? _brightness;
       _cameraIndex = p.getInt('cameraIndex') ?? _cameraIndex;
+      _cameraRotation = p.getInt('cameraRotation') ?? _cameraRotation;
     });
   }
 
@@ -134,6 +136,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     await p.setBool('useRtsp', _useRtsp);
     await p.setDouble('brightness', _brightness);
     await p.setInt('cameraIndex', _cameraIndex);
+    await p.setInt('cameraRotation', _cameraRotation);
   }
 
   @override
@@ -173,15 +176,17 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
   /// can't open; mobile uses the first-party camera plugin.
   CameraSource _buildCamera() {
     if (_useRtsp && _rtspSupported) {
-      return RtspCameraSource(_rtspCtrl.text.trim());
+      return RtspCameraSource(_rtspCtrl.text.trim(),
+          quarterTurns: _cameraRotation);
     }
     if (_rtspSupported && _cameras.isNotEmpty) {
       final raw = _cameras[_cameraIndex.clamp(0, _cameras.length - 1)].name;
       final lt = raw.indexOf(' <');
       final name = lt > 0 ? raw.substring(0, lt) : raw;
-      return RtspCameraSource.dshow(name);
+      return RtspCameraSource.dshow(name, quarterTurns: _cameraRotation);
     }
-    return CameraPackageSource(cameraIndex: _cameraIndex);
+    return CameraPackageSource(
+        cameraIndex: _cameraIndex, quarterTurns: _cameraRotation);
   }
 
   TargetConfig? _buildConfig() {
@@ -557,6 +562,25 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
               onChanged: (i) => setState(() => _cameraIndex = i ?? _cameraIndex),
             ),
           ],
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Text('Camera rotation'),
+              const Spacer(),
+              SegmentedButton<int>(
+                segments: const [
+                  ButtonSegment(value: 0, label: Text('0°')),
+                  ButtonSegment(value: 1, label: Text('90°')),
+                  ButtonSegment(value: 2, label: Text('180°')),
+                  ButtonSegment(value: 3, label: Text('270°')),
+                ],
+                selected: {_cameraRotation},
+                showSelectedIcon: false,
+                onSelectionChanged: (s) =>
+                    setState(() => _cameraRotation = s.first),
+              ),
+            ],
+          ),
           const SizedBox(height: 12),
           if (_rtspSupported) ...[
             SwitchListTile(
