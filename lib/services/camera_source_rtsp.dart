@@ -76,8 +76,8 @@ class RtspCameraSource implements CameraSource {
         await setProp('cache', 'no');
         await setProp('profile', 'low-latency');
         await setProp('untimed', 'yes');
-        await setProp(
-            'demuxer-lavf-o', 'fflags=nobuffer,video_size=1280x720,framerate=30');
+        await setProp('demuxer-lavf-o',
+            'fflags=nobuffer,video_size=1280x720,framerate=30');
       }
     }
     // Attaching a VideoController is required for screenshot() to have frames.
