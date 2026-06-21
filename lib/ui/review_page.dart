@@ -76,7 +76,9 @@ class _ReviewPageState extends State<ReviewPage> {
         child: Column(
         children: [
           AspectRatio(
-            aspectRatio: 4 / 3,
+            // Match the camera so the nodes keep their true proportions instead
+            // of being stretched into a fixed box.
+            aspectRatio: widget.scan.camera.previewAspectRatio,
             child: Container(
               margin: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -88,8 +90,9 @@ class _ReviewPageState extends State<ReviewPage> {
               child: InteractiveViewer(
                 maxScale: 12,
                 child: CustomPaint(
+                  // Raw detected positions = exactly what the camera saw.
                   painter: LayoutPainter(
-                    LayoutPainter.fromGrid(_grid),
+                    LayoutPainter.fromDetected(points),
                     showLabels: true,
                     padding: 18,
                   ),
