@@ -83,10 +83,16 @@ class _ReviewPageState extends State<ReviewPage> {
                 color: Colors.black,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: CustomPaint(
-                painter: LayoutPainter(
-                  LayoutPainter.fromGrid(_grid),
-                  showLabels: true,
+              clipBehavior: Clip.antiAlias,
+              // Pinch / scroll to zoom and drag to pan, to inspect dense nodes.
+              child: InteractiveViewer(
+                maxScale: 12,
+                child: CustomPaint(
+                  painter: LayoutPainter(
+                    LayoutPainter.fromGrid(_grid),
+                    showLabels: true,
+                  ),
+                  child: const SizedBox.expand(),
                 ),
               ),
             ),
