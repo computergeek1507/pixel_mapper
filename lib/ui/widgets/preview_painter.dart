@@ -17,10 +17,15 @@ class LayoutPainter extends CustomPainter {
   final bool showLabels;
   final Color color;
 
+  /// Inset (px) so edge nodes and their labels aren't clipped at the border.
+  /// Keep 0 for the camera overlay so dots align with the image edge-to-edge.
+  final double padding;
+
   LayoutPainter(
     this.dots, {
     this.showLabels = false,
     this.color = const Color(0xFF00E676),
+    this.padding = 0,
   });
 
   /// Dots from raw detected points (normalized screen positions).
@@ -46,8 +51,11 @@ class LayoutPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
 
+    final iw = (size.width - 2 * padding).clamp(1.0, size.width);
+    final ih = (size.height - 2 * padding).clamp(1.0, size.height);
     for (final dot in dots) {
-      final c = Offset(dot.pos.dx * size.width, dot.pos.dy * size.height);
+      final c =
+          Offset(padding + dot.pos.dx * iw, padding + dot.pos.dy * ih);
       canvas.drawCircle(c, 5, fill);
       canvas.drawCircle(c, 5, stroke);
       if (showLabels) {
@@ -69,5 +77,7 @@ class LayoutPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant LayoutPainter old) =>
-      old.dots != dots || old.showLabels != showLabels;
+      old.dots != dots ||
+      old.showLabels != showLabels ||
+      old.padding != padding;
 }

@@ -91,6 +91,7 @@ class _ReviewPageState extends State<ReviewPage> {
                   painter: LayoutPainter(
                     LayoutPainter.fromGrid(_grid),
                     showLabels: true,
+                    padding: 18,
                   ),
                   child: const SizedBox.expand(),
                 ),
