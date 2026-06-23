@@ -47,3 +47,8 @@ app.*.map.json
 # Android Gradle build output
 android/build/
 **/android/build/
+
+# Android release signing — never commit secrets/keystores
+android/key.properties
+**/*.jks
+**/*.keystore

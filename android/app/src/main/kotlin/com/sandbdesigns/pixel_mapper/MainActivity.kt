@@ -1,4 +1,4 @@
-package com.scooterseh.pixel_mapper
+package com.sandbdesigns.pixel_mapper
 
 import io.flutter.embedding.android.FlutterActivity
 
