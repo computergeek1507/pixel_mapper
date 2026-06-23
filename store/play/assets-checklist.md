@@ -4,6 +4,15 @@ Everything Google Play requires before you can publish, with exact specs and whe
 each item goes in **Play Console → Main store listing** (and a couple of
 **Release**/**App content** pages).
 
+## Already generated (in this folder)
+
+| File | Use | Status |
+|---|---|---|
+| `assets/icon-512.png` | High-res app icon (512×512) | ✅ ready |
+| `assets/feature-graphic.png` | Feature graphic (1024×500, no alpha) | ✅ ready |
+| `assets/feature-graphic.svg` | Editable source for the feature graphic | source |
+| `screenshots/01-target.png` … `04-export.png` | Phone screenshots (1080×2400) | ✅ ready — see `screenshots/README.md` (02 uses the emulator test scene; replace with a real scan when possible) |
+
 ## Required graphics
 
 | Asset | Spec | Format | Notes |

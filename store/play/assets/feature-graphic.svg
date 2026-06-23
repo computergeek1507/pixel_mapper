@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="500" viewBox="0 0 1024 500">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d2c5c"/>
+      <stop offset="0.55" stop-color="#1565C0"/>
+      <stop offset="1" stop-color="#0a1f44"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.2"/>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="500" fill="url(#bg)"/>
+  <ellipse cx="720" cy="250" rx="360" ry="300" fill="url(#glow)"/>
+
+  <!-- ===== Left: wordmark + tagline ===== -->
+  <g font-family="Segoe UI, Arial, sans-serif">
+    <text x="64" y="210" font-size="78" font-weight="700" fill="#ffffff" letter-spacing="-1">Pixel</text>
+    <text x="64" y="292" font-size="78" font-weight="700" fill="#ffd24d" letter-spacing="-1">Mapper</text>
+    <text x="66" y="346" font-size="27" font-weight="400" fill="#dce8ff">Auto-map your LED pixels into</text>
+    <text x="66" y="382" font-size="27" font-weight="400" fill="#dce8ff">an xLights custom model.</text>
+    <text x="66" y="438" font-size="19" font-weight="600" fill="#9fc0ff" letter-spacing="2">DDP · sACN · CAMERA SCAN</text>
+  </g>
+
+  <!-- ===== Right: phone camera frame with a detected pixel layout ===== -->
+  <g transform="translate(648,70)">
+    <!-- phone body -->
+    <rect x="0" y="0" width="300" height="360" rx="34" fill="#0a1730" stroke="#3d6cc0" stroke-width="2.5"/>
+    <rect x="14" y="14" width="272" height="332" rx="22" fill="#06122a"/>
+
+    <!-- camera viewfinder corner brackets -->
+    <g stroke="#ffd24d" stroke-width="3.5" fill="none" stroke-linecap="round">
+      <path d="M40 56 v-18 h18"/>
+      <path d="M260 56 v-18 h-18"/>
+      <path d="M40 304 v18 h18"/>
+      <path d="M260 304 v18 h-18"/>
+    </g>
+
+    <!-- string of detected pixels (faint connecting path + glowing dots) -->
+    <polyline points="78,250 96,150 150,90 210,150 224,250 150,300 78,250"
+              fill="none" stroke="#2f4f86" stroke-width="2" stroke-opacity="0.7"/>
+    <g filter="url(#soft)">
+      <circle cx="78"  cy="250" r="11" fill="#ff4d4d"/>
+      <circle cx="96"  cy="150" r="11" fill="#4dd0ff"/>
+      <circle cx="150" cy="90"  r="11" fill="#ffffff"/>
+      <circle cx="210" cy="150" r="11" fill="#7cff5a"/>
+      <circle cx="224" cy="250" r="11" fill="#ffd24d"/>
+      <circle cx="150" cy="300" r="11" fill="#ff7ad9"/>
+      <circle cx="150" cy="190" r="11" fill="#9b8cff"/>
+    </g>
+    <g>
+      <circle cx="78"  cy="250" r="6" fill="#ffffff"/>
+      <circle cx="96"  cy="150" r="6" fill="#ffffff"/>
+      <circle cx="150" cy="90"  r="6" fill="#ffffff"/>
+      <circle cx="210" cy="150" r="6" fill="#ffffff"/>
+      <circle cx="224" cy="250" r="6" fill="#ffffff"/>
+      <circle cx="150" cy="300" r="6" fill="#ffffff"/>
+      <circle cx="150" cy="190" r="6" fill="#ffffff"/>
+    </g>
+  </g>
+</svg>
