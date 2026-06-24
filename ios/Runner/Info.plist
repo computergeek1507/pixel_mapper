@@ -6,6 +6,10 @@
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Pixel Mapper uses the camera to photograph your light display and locate each lit pixel.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Pixel Mapper sends pixel-control data (DDP / sACN) to your lighting controller on the local network.</string>
 	<key>CFBundleDisplayName</key>
 	<string>Pixel Mapper</string>
 	<key>CFBundleExecutable</key>
