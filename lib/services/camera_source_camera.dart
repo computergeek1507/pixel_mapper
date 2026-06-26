@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show DeviceOrientation;
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 
@@ -128,9 +129,24 @@ class CameraPackageSource implements CameraSource {
   @override
   double get previewAspectRatio {
     final c = _controller;
-    final base =
-        (c != null && c.value.isInitialized) ? c.value.aspectRatio : 16 / 9;
-    return quarterTurns.isOdd ? 1 / base : base;
+    if (c == null || !c.value.isInitialized) return 16 / 9;
+    final v = c.value;
+    // `value.aspectRatio` comes from `previewSize`, which the Android (CameraX)
+    // plugin always reports in the sensor's natural *landscape* orientation —
+    // so on a portrait phone it's ~1.78 even though the preview drawn is tall.
+    // CameraPreview compensates by using `1 / aspectRatio` when the device is
+    // portrait (see camera_preview.dart). We must size our overlay box the same
+    // way, otherwise the Stack(StackFit.expand) stretches the preview to fill a
+    // landscape box and circles render as ovals.
+    final orientation = v.previewPauseOrientation ??
+        v.lockedCaptureOrientation ??
+        v.deviceOrientation;
+    final isLandscape = orientation == DeviceOrientation.landscapeLeft ||
+        orientation == DeviceOrientation.landscapeRight;
+    final display = isLandscape ? v.aspectRatio : 1 / v.aspectRatio;
+    // `quarterTurns` is the user's manual mount rotation; an odd turn transposes
+    // the displayed image, so the ratio inverts again.
+    return quarterTurns.isOdd ? 1 / display : display;
   }
 
   @override

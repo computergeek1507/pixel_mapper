@@ -1,0 +1,5 @@
+Fixes and improvements:
+
+• Fixed stretched camera preview on Android — detected pixels now render as true circles, not ovals.
+• Exported .xmodel files now go through the system "Save to…" picker, so you can save them to Downloads, Drive, and other locations the Files app can see.
+• Added a landscape layout for the Scan screen: larger preview with controls alongside.

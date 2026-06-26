@@ -52,15 +52,22 @@ class _ExportPageState extends State<ExportPage> {
         : _nameCtrl.text.trim();
     try {
       final bytes = Uint8List.fromList(utf8.encode(_buildXml()));
-      final path = await FileSaver.instance.saveFile(
+      // `saveAs` opens the system "Save to…" picker so the user can drop the
+      // .xmodel straight into Downloads, Documents, Drive, etc. The old
+      // `saveFile` wrote silently to the app's private Android/data folder,
+      // which the Files app hides — so models were effectively unreachable.
+      // Returns null if the user backs out of the picker.
+      final path = await FileSaver.instance.saveAs(
         name: name,
         bytes: bytes,
         ext: 'xmodel',
         mimeType: MimeType.other,
       );
-      setState(() => _message = 'Saved to $path');
+      if (!mounted) return;
+      setState(() =>
+          _message = path == null ? 'Save cancelled.' : 'Saved to $path');
     } catch (e) {
-      setState(() => _message = 'Save failed: $e');
+      if (mounted) setState(() => _message = 'Save failed: $e');
     }
   }
 
@@ -102,7 +109,7 @@ class _ExportPageState extends State<ExportPage> {
           FilledButton.icon(
             onPressed: _save,
             icon: const Icon(Icons.save),
-            label: const Text('Save .xmodel'),
+            label: const Text('Save .xmodel…'),
           ),
           if (_message != null) ...[
             const SizedBox(height: 12),

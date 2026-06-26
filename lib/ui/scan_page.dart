@@ -124,14 +124,46 @@ class _ScanPageState extends State<ScanPage> {
   @override
   Widget build(BuildContext context) {
     final running = _scan.state == ScanState.running;
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
     return Scaffold(
       appBar: AppBar(title: const Text('Scan')),
       body: SafeArea(
         top: false,
-        child: Column(
-        children: [
-          Expanded(
-            child: Container(
+        // Landscape: big preview on the left, scrollable controls on the right
+        // (the controls scroll so they never overflow the short window).
+        // Portrait: preview on top, controls below.
+        child: isLandscape
+            ? Row(
+                children: [
+                  Expanded(child: _previewArea(running)),
+                  SizedBox(
+                    width: 360,
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(16),
+                      child: _controls(running),
+                    ),
+                  ),
+                ],
+              )
+            : Column(
+                children: [
+                  Expanded(child: _previewArea(running)),
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: _controls(running),
+                  ),
+                ],
+              ),
+      ),
+    );
+  }
+
+  /// Black-backed live camera preview with detected dots + ROI overlaid, sized
+  /// to the camera's true aspect ratio so nothing is stretched. Drag to set a
+  /// region of interest.
+  Widget _previewArea(bool running) {
+    return Container(
               color: Colors.black,
               width: double.infinity,
               child: _cameraError != null
@@ -188,11 +220,14 @@ class _ScanPageState extends State<ScanPage> {
                     }),
                       ),
                     ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
+    );
+  }
+
+  /// The scan controls (progress, settle/brightness sliders, toggles, ROI hint,
+  /// and start/stop/review buttons). Shared by the portrait and landscape
+  /// layouts.
+  Widget _controls(bool running) {
+    return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 LinearProgressIndicator(value: running ? _scan.progress : null),
@@ -347,11 +382,6 @@ class _ScanPageState extends State<ScanPage> {
                   ],
                 ),
               ],
-            ),
-          ),
-        ],
-        ),
-      ),
     );
   }
 
