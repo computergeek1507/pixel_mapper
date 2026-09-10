@@ -2,6 +2,17 @@
 
 All notable changes to Pixel Mapper are documented here.
 
+## 1.1.0+12 — 2026-09-10
+
+### Added
+- **Wiring Viewer tab.** A new bottom tab alongside Scan & Map, merging in
+  the standalone xModel Wiring Viewer app: browse the xLights vendor
+  catalog, load a `.xmodel` or `xlights_rgbeffects.xml` from device, and
+  view the physical pixel wiring order as a pan/zoom diagram (color-by-strand,
+  backside/front toggle, node labels, print to PDF). Supports Custom, Matrix,
+  Single Line, Arches, Tree, Circle, Star, and Spinner model shapes.
+- App renamed (display title only) to "xModel Tools - Pixel Mapper".
+
 ## 1.0.1+11 — 2026-06-26
 
 ### Fixed
