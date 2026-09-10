@@ -53,7 +53,9 @@ dependencies:
   xml: ^6.6.1
   # Cross-platform save of generated .xmodel / pick photo overlay.
   file_saver: ^0.2.14
-  file_picker: ^8.1.0
+  # Wiring Viewer's "Load .xmodel from device" needs the static
+  # FilePicker.pickFiles(...) API added in file_picker v10+.
+  file_picker: ^11.0.2
   # Temp frame storage.
   path_provider: ^2.1.4
   # Persist IP, pixel count, protocol, universe (like fpp_view).
@@ -62,6 +64,17 @@ dependencies:
   uuid: ^4.5.1
   wakelock_plus: ^1.5.2
   # UDP pixel data uses dart:io RawDatagramSocket directly — no package.
+
+  # --- Wiring Viewer tab ---
+  # Fetch the xLights vendor catalog and vendor .xmodel downloads.
+  http: ^1.2.0
+  # Disk+memory cached vendor/model thumbnail images.
+  cached_network_image: ^3.4.1
+  # Open a vendor's product page in the device's browser.
+  url_launcher: ^6.3.1
+  # Render the wiring diagram to PDF and hand it to the platform print dialog.
+  printing: ^5.13.4
+  pdf: ^3.11.1
 
 dev_dependencies:
   flutter_test:

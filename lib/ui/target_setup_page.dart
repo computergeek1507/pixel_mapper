@@ -28,7 +28,11 @@ class TargetSetupPage extends StatefulWidget {
   State<TargetSetupPage> createState() => _TargetSetupPageState();
 }
 
-class _TargetSetupPageState extends State<TargetSetupPage> {
+class _TargetSetupPageState extends State<TargetSetupPage>
+    with AutomaticKeepAliveClientMixin<TargetSetupPage> {
+  @override
+  bool get wantKeepAlive => true;
+
   final _ipCtrl = TextEditingController(text: '192.168.1.50');
   final _countCtrl = TextEditingController(text: '50');
   final _universeCtrl = TextEditingController(text: '1');
@@ -107,14 +111,21 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
       _ipCtrl.text = p.getString('ip') ?? _ipCtrl.text;
       _countCtrl.text = p.getString('count') ?? _countCtrl.text;
       _universeCtrl.text = p.getString('universe') ?? _universeCtrl.text;
-      _startChannelCtrl.text = p.getString('startChannel') ?? _startChannelCtrl.text;
+      _startChannelCtrl.text =
+          p.getString('startChannel') ?? _startChannelCtrl.text;
       _rtspCtrl.text = p.getString('rtsp') ?? _rtspCtrl.text;
       _protocol = Protocol.values.firstWhere(
-          (e) => e.name == p.getString('protocol'), orElse: () => _protocol);
+        (e) => e.name == p.getString('protocol'),
+        orElse: () => _protocol,
+      );
       _colorOrder = ColorOrder.values.firstWhere(
-          (e) => e.name == p.getString('colorOrder'), orElse: () => _colorOrder);
+        (e) => e.name == p.getString('colorOrder'),
+        orElse: () => _colorOrder,
+      );
       _scanMode = ScanMode.values.firstWhere(
-          (e) => e.name == p.getString('scanMode'), orElse: () => _scanMode);
+        (e) => e.name == p.getString('scanMode'),
+        orElse: () => _scanMode,
+      );
       _useRtsp = p.getBool('useRtsp') ?? _useRtsp;
       _brightness = p.getDouble('brightness') ?? _brightness;
       _cameraIndex = p.getInt('cameraIndex') ?? _cameraIndex;
@@ -163,9 +174,11 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
     await _disconnect();
     final CameraSource camera = _buildCamera();
     if (!mounted) return;
-    await Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => ScanPage(config: cfg, camera: camera, mode: _scanMode),
-    ));
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ScanPage(config: cfg, camera: camera, mode: _scanMode),
+      ),
+    );
     // Returning from the scan: restore the manual-test connection so the user
     // isn't silently disconnected after a scan.
     if (mounted && wasConnected) await _connect();
@@ -176,8 +189,10 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
   /// can't open; mobile uses the first-party camera plugin.
   CameraSource _buildCamera() {
     if (_useRtsp && _rtspSupported) {
-      return RtspCameraSource(_rtspCtrl.text.trim(),
-          quarterTurns: _cameraRotation);
+      return RtspCameraSource(
+        _rtspCtrl.text.trim(),
+        quarterTurns: _cameraRotation,
+      );
     }
     if (_rtspSupported && _cameras.isNotEmpty) {
       final raw = _cameras[_cameraIndex.clamp(0, _cameras.length - 1)].name;
@@ -186,7 +201,9 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
       return RtspCameraSource.dshow(name, quarterTurns: _cameraRotation);
     }
     return CameraPackageSource(
-        cameraIndex: _cameraIndex, quarterTurns: _cameraRotation);
+      cameraIndex: _cameraIndex,
+      quarterTurns: _cameraRotation,
+    );
   }
 
   TargetConfig? _buildConfig() {
@@ -327,12 +344,11 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // required by AutomaticKeepAliveClientMixin
     final pixelCount = _output?.pixelCount ?? 0;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Pixel Mapper — Target')),
-      body: SafeArea(
-        top: false,
-        child: ListView(
+    return SafeArea(
+      top: false,
+      child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           TextField(
@@ -507,9 +523,9 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
                 ),
                 OutlinedButton.icon(
                   onPressed: _toggleChase,
-                  icon: Icon(_chaseTimer == null
-                      ? Icons.play_arrow
-                      : Icons.stop),
+                  icon: Icon(
+                    _chaseTimer == null ? Icons.play_arrow : Icons.stop,
+                  ),
                   label: Text(_chaseTimer == null ? 'Chase' : 'Stop chase'),
                 ),
                 FilledButton.tonalIcon(
@@ -543,7 +559,7 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
           Text(
             _scanMode == ScanMode.fastBase3
                 ? 'Lights every pixel each frame in R/G/B; identifies all '
-                    'pixels in ~log₃(N)+2 frames (xLights method).'
+                      'pixels in ~log₃(N)+2 frames (xLights method).'
                 : 'Lights one pixel at a time — slower but simplest.',
             style: Theme.of(context).textTheme.bodySmall,
           ),
@@ -559,7 +575,8 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
                 for (var i = 0; i < _cameras.length; i++)
                   DropdownMenuItem(value: i, child: Text(_cameraLabel(i))),
               ],
-              onChanged: (i) => setState(() => _cameraIndex = i ?? _cameraIndex),
+              onChanged: (i) =>
+                  setState(() => _cameraIndex = i ?? _cameraIndex),
             ),
           ],
           const SizedBox(height: 12),
@@ -587,7 +604,8 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
               contentPadding: EdgeInsets.zero,
               title: const Text('Use RTSP network camera'),
               subtitle: const Text(
-                  'Off: device camera / Windows webcam / Connected Camera'),
+                'Off: device camera / Windows webcam / Connected Camera',
+              ),
               value: _useRtsp,
               onChanged: (v) => setState(() => _useRtsp = v),
             ),
@@ -607,7 +625,6 @@ class _TargetSetupPageState extends State<TargetSetupPage> {
             label: const Text('Start camera scan'),
           ),
         ],
-        ),
       ),
     );
   }

@@ -8,7 +8,7 @@
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
 
     <application
-        android:label="Pixel Mapper"
+        android:label="xModel Tools - Pixel Mapper"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

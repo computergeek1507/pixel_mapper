@@ -11,7 +11,7 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Pixel Mapper sends pixel-control data (DDP / sACN) to your lighting controller on the local network.</string>
 	<key>CFBundleDisplayName</key>
-	<string>Pixel Mapper</string>
+	<string>xModel Tools - Pixel Mapper</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
